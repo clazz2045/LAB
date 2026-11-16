@@ -62,6 +62,11 @@ class TestSessionBootstrap(unittest.TestCase):
         real_agents = (Path(_script_dir).parent.parent / "AGENTS.md").read_text(encoding="utf-8")
         (self.vault_root / "AGENTS.md").write_text(real_agents, encoding="utf-8")
 
+        real_hooks = Path(_script_dir).parent.parent / ".agents" / "hooks.json"
+        if real_hooks.is_file():
+            (self.vault_root / ".agents").mkdir(parents=True, exist_ok=True)
+            (self.vault_root / ".agents" / "hooks.json").write_text(real_hooks.read_text(encoding="utf-8"), encoding="utf-8")
+
         real_ai_room = Path(_script_dir).parent
         real_roles = real_ai_room / "Role"
         if real_roles.is_dir():

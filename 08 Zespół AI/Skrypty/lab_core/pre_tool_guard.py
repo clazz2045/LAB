@@ -1,26 +1,29 @@
 #!/usr/bin/env python3
 """lab_core.pre_tool_guard - Bramka prewencyjna Poziomu 1 (PreToolUse Hook) w Antigravity.
 
-Zabezpiecza środowisko LAB przed naruszeniem Reguły 8 (brak bezpośredniej edycji kodu,
-brak przeszukiwania repozytorium w sesji głównej, brak chciwej ścieżki Koordynatora).
+Zabezpiecza środowisko LAB przed naruszeniem Reguły 8 (twardy zakaz bezpośredniej edycji kodu
+i bazy wiedzy oraz zakaz masowego zwiadu powłokowego w sesji głównej Koordynatora).
 Wywoływany synchronicznie przez harness platformy Antigravity przed uruchomieniem narzędzi:
   - run_command
   - read_file
   - write_file
   - edit_file
+  - invoke_subagent
 
 Architektura:
   1. Fast-Path (<2 ms): Wykrywanie subagenta na podstawie nagłówka transkryptu (krok 0, SYSTEM)
      lub katalogu wiadomości wejściowych. Subagenci otrzymują natychmiastowe {"decision": "allow"}.
   2. Koordynator (Sesja Główna):
-     - read_file: Dopuszczone tylko pliki Agendy, Dashboardu, transkrypt bieżącej sesji, AGENTS.md,
-       GEMINI.md, lab.config.toml oraz kontrakt Koordynatora. Pliki produkcyjne (kod, baza wiedzy,
-       projekty, operacje, zasoby, bazy danych) są blokowane.
+     - invoke_subagent: Wymuszenie jawnego parametru Model (ochrona budżetu i okna 250k).
+       Dla 'research' dozwolone wyłącznie 'flash' / 'flash_lite'.
+       Dla 'self' dozwolone jawne 'flash', 'flash_lite', 'inherit', 'pro'.
+     - read_file: Model Read-Only (brak licznika i brak blokady odczytu plików w sesji głównej;
+       zakres merytoryczny i ochronę okna 250k reguluje AGENTS.md).
      - write_file / edit_file: Dopuszczone tylko pliki Agendy, Dashboardu i sesji (brain/tmp).
-       Wszystkie pliki produkcyjne są bezwzględnie blokowane.
+       Wszystkie pliki produkcyjne (kod, baza wiedzy, projekty, operacje, zasoby) są bezwzględnie blokowane.
      - run_command: Dopuszczone tylko polecenia statusowe oraz skrypty koordynacyjne:
-       session_bootstrap.py, checkpoint.py, rollover_agenda.py, subagents.py, subagent_gate.py,
-       token_telemetry.py, check_quality.py, statusowe zapytania sqlite3 do lab_master.db, git status.
+       session_bootstrap.py, checkpoint.py, rollover_agenda.py, subagents.py,
+       telemetry.py, check_quality.py, statusowe zapytania sqlite3 do lab_master.db, git status.
        Narzędzia zwiadu powłokowego (grep, find, cat, head, tail, awk, sed, rg) oraz modyfikacji
        są bezwzględnie blokowane.
   3. Fail-Safe: Wszelkie nieoczekiwane wyjątki są przechwytywane, rejestrowane w
@@ -62,6 +65,22 @@ WRITE_TOOLS = frozenset({
 SHELL_TOOLS = frozenset({
     "run_command",
     "execute_command",
+})
+
+SUBAGENT_TOOLS = frozenset({
+    "invoke_subagent",
+})
+
+ALLOWED_SUBAGENT_MODELS = frozenset({
+    "flash",
+    "flash_lite",
+    "inherit",
+    "pro",
+})
+
+RESEARCH_ALLOWED_MODELS = frozenset({
+    "flash",
+    "flash_lite",
 })
 
 RECON_COMMANDS = frozenset({
@@ -107,13 +126,8 @@ ALLOWED_SHELL_STATUS_EXES = frozenset({
     "echo",
 })
 
-DENY_REASON_READ = (
-    "BLOKADA REGUŁY 8: Koordynator nie ma prawa czytać plików produkcyjnych w sesji głównej. "
-    "Oddeleguj zadanie do subagenta (Klara / Maks)."
-)
-
 DENY_REASON_WRITE = (
-    "BLOKADA REGUŁY 8: Koordynator nie ma prawa edytować plików w sesji głównej."
+    "BLOKADA REGUŁY 8: Koordynator nie ma prawa edytować plików produkcyjnych, kodu ani bazy wiedzy w sesji głównej."
 )
 
 DENY_REASON_RECON = (
@@ -123,6 +137,14 @@ DENY_REASON_RECON = (
 
 DENY_REASON_COMMAND = (
     "BLOKADA REGUŁY 8: Polecenie niedozwolone dla Koordynatora w sesji głównej."
+)
+
+DENY_REASON_SUBAGENT_MISSING_MODEL = (
+    "BLOKADA REGUŁY 8: Wymagane jest jawne podanie parametru 'Model' przy wywołaniu invoke_subagent."
+)
+
+DENY_REASON_RESEARCH_MODEL = (
+    "BLOKADA REGUŁY 8: Dla subagenta 'research' dopuszczalne są wyłącznie modele 'flash' lub 'flash_lite' (zakaz 'inherit' i 'pro')."
 )
 
 LOG_FILE_PATH = Path("/tmp/lab_pre_tool_guard_error.log")
@@ -188,52 +210,6 @@ def normalize_target_path(raw_path: str, vault_root: Path) -> Path:
     else:
         p = p.resolve()
     return p
-
-
-def is_allowed_coordinator_read(raw_path: str, vault_root: Path) -> bool:
-    """Weryfikuje, czy plik może być odczytany przez Koordynatora w sesji głównej."""
-    if not raw_path or not raw_path.strip():
-        return True
-
-    root = vault_root.resolve()
-    p = normalize_target_path(raw_path, root)
-    p_str = str(p)
-    parts = set(p.parts)
-
-    # 1. Sesja / brain / tmp / logi
-    if "brain" in parts or ".system_generated" in parts:
-        return True
-    if (
-        p_str.startswith("/tmp")
-        or p_str.startswith("/private/tmp")
-        or p_str.startswith(tempfile.gettempdir())
-        or "tmp" in parts
-    ):
-        return True
-
-    # 2. Agenda Robocza w Warsztacie
-    if ("Agenda Robocza" in p.name or "Agenda_Robocza" in p.name) and (
-        "02 Warsztat" in parts or "Warsztat" in parts or p.parent.name.endswith("Warsztat")
-    ):
-        return True
-
-    # 3. Dashboard w Warsztacie (niezależnie od nazwy instancji)
-    if (p.name in ("Dashboard LAB.md", "Dashboard_LAB.md") or (p.name.startswith("Dashboard ") and p.suffix.lower() == ".md")) and (
-        "02 Warsztat" in parts or "Warsztat" in parts or p.parent.name.endswith("Warsztat")
-    ):
-        return True
-
-    # 4. Pliki zarządcze korzenia skarbca
-    if p.name in ("AGENTS.md", "GEMINI.md", "lab.config.toml"):
-        if p == (root / p.name) or p.parent == root:
-            return True
-
-    # 5. Kontrakt Koordynatora
-    if p.name == "AGENT.md" and ("Koordynator" in parts or "08 Zespół AI" in parts):
-        return True
-
-    # Wszelkie inne pliki produkcyjne podlegają blokadzie
-    return False
 
 
 def is_allowed_coordinator_write(raw_path: str, vault_root: Path) -> bool:
@@ -386,6 +362,47 @@ def is_allowed_coordinator_command(cmd_str: str) -> Tuple[bool, Optional[str]]:
     return True, None
 
 
+def is_allowed_coordinator_subagent(tool_args: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
+    """Weryfikuje parametry wywołania invoke_subagent dla Koordynatora w sesji głównej."""
+    if not isinstance(tool_args, dict):
+        return False, DENY_REASON_SUBAGENT_MISSING_MODEL
+
+    raw_model = tool_args.get("Model")
+    if raw_model is None:
+        raw_model = tool_args.get("model")
+
+    if raw_model is None or not str(raw_model).strip():
+        return False, DENY_REASON_SUBAGENT_MISSING_MODEL
+
+    model = str(raw_model).strip().lower()
+
+    raw_type = tool_args.get("TypeName")
+    if raw_type is None:
+        raw_type = tool_args.get("type_name") or tool_args.get("typeName")
+    type_name = str(raw_type).strip().lower() if raw_type else ""
+
+    if type_name == "research":
+        if model not in RESEARCH_ALLOWED_MODELS:
+            return False, DENY_REASON_RESEARCH_MODEL
+        return True, None
+
+    if type_name == "self":
+        if model not in ALLOWED_SUBAGENT_MODELS:
+            return False, (
+                f"BLOKADA REGUŁY 8: Niedozwolona wartość parametru Model='{raw_model}' dla subagenta 'self'. "
+                "Dopuszczalne wartości: flash, flash_lite, inherit, pro."
+            )
+        return True, None
+
+    if model not in ALLOWED_SUBAGENT_MODELS:
+        return False, (
+            f"BLOKADA REGUŁY 8: Niedozwolona wartość parametru Model='{raw_model}'. "
+            "Dopuszczalne wartości: flash, flash_lite, inherit, pro."
+        )
+
+    return True, None
+
+
 def extract_event_data(payload: Dict[str, Any]) -> Tuple[str, Dict[str, Any], Optional[str]]:
     """Wyodrębnia nazwę narzędzia, argumenty oraz ścieżkę transkryptu z wejścia."""
     tool_name = ""
@@ -418,29 +435,23 @@ def evaluate_pre_tool(payload: Dict[str, Any], vault_root: Optional[Path] = None
     if is_subagent_session(transcript_path):
         return {"decision": "allow"}
 
-    # Narzędzia nieobjęte restrykcjami Koordynatora (np. invoke_subagent, send_message)
+    # KROK 2: Weryfikacja invoke_subagent dla Koordynatora (Sesja Główna)
+    if tool_name_lower in SUBAGENT_TOOLS:
+        allowed, reason = is_allowed_coordinator_subagent(tool_args)
+        if allowed:
+            return {"decision": "allow"}
+        return {"decision": "deny", "reason": reason or DENY_REASON_SUBAGENT_MISSING_MODEL}
+
+    # Narzędzia Read-Only (read_file) oraz narzędzia nieobjęte restrykcjami (np. send_message)
     if (
-        tool_name_lower not in READ_TOOLS
-        and tool_name_lower not in WRITE_TOOLS
-        and tool_name_lower not in SHELL_TOOLS
+        tool_name_lower in READ_TOOLS
+        or (tool_name_lower not in WRITE_TOOLS and tool_name_lower not in SHELL_TOOLS)
     ):
         return {"decision": "allow"}
 
     root = vault_root or find_vault_root_fast()
 
-    # KROK 2: Weryfikacja dla sesji głównej (Koordynator)
-    if tool_name_lower in READ_TOOLS:
-        raw_path = str(
-            tool_args.get("Path")
-            or tool_args.get("path")
-            or tool_args.get("file_path")
-            or tool_args.get("FilePath")
-            or ""
-        )
-        if is_allowed_coordinator_read(raw_path, root):
-            return {"decision": "allow"}
-        return {"decision": "deny", "reason": DENY_REASON_READ}
-
+    # KROK 3: Weryfikacja dla sesji głównej (Koordynator) - Narzędzia zapisu i poleceń
     if tool_name_lower in WRITE_TOOLS:
         raw_path = str(
             tool_args.get("Path")

@@ -55,7 +55,17 @@ CREATE TABLE IF NOT EXISTS session_telemetry (
     tokens_active INTEGER NOT NULL,
     tokens_limit INTEGER NOT NULL,
     load_zone TEXT NOT NULL,
-    timestamp TEXT NOT NULL
+    timestamp TEXT NOT NULL,
+    input_tokens INTEGER DEFAULT 0,
+    cache_read_tokens INTEGER DEFAULT 0,
+    output_tokens INTEGER DEFAULT 0,
+    planner_calls INTEGER DEFAULT 0,
+    subagents_count INTEGER DEFAULT 0,
+    subagents_input_tokens INTEGER DEFAULT 0,
+    subagents_cache_read_tokens INTEGER DEFAULT 0,
+    subagents_output_tokens INTEGER DEFAULT 0,
+    subagents_planner_calls INTEGER DEFAULT 0,
+    peak_context_tokens INTEGER DEFAULT 0
 );
 
 -- 5. Rejestr zasobów i notatek referencyjnych (z flagą consumed)
@@ -130,6 +140,18 @@ def get_master_db_connection(db_path: Path | str) -> sqlite3.Connection:
 
 
 DISPATCH_EXTRA_COLUMNS = ("note", "subagent_id", "content_sha256")
+TELEMETRY_EXTRA_COLUMNS = (
+    "input_tokens",
+    "cache_read_tokens",
+    "output_tokens",
+    "planner_calls",
+    "subagents_count",
+    "subagents_input_tokens",
+    "subagents_cache_read_tokens",
+    "subagents_output_tokens",
+    "subagents_planner_calls",
+    "peak_context_tokens",
+)
 
 
 def ensure_dispatch_columns(conn: sqlite3.Connection) -> None:
@@ -140,6 +162,16 @@ def ensure_dispatch_columns(conn: sqlite3.Connection) -> None:
     for col in DISPATCH_EXTRA_COLUMNS:
         if col not in existing:
             conn.execute(f"ALTER TABLE subagent_dispatches ADD COLUMN {col} TEXT")
+
+
+def ensure_telemetry_columns(conn: sqlite3.Connection) -> None:
+    """Wstecznie zgodna migracja: dodaje brakujące kolumny sum i subagentów do session_telemetry."""
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(session_telemetry)")}
+    if not existing:
+        return
+    for col in TELEMETRY_EXTRA_COLUMNS:
+        if col not in existing:
+            conn.execute(f"ALTER TABLE session_telemetry ADD COLUMN {col} INTEGER DEFAULT 0")
 
 
 def init_master_db(
@@ -171,6 +203,7 @@ def init_master_db(
         with conn:
             conn.executescript(SCHEMA_SQL)
             ensure_dispatch_columns(conn)
+            ensure_telemetry_columns(conn)
 
             # Inicjalne metadane systemowe
             metadata = [

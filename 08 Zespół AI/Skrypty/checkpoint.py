@@ -69,6 +69,7 @@ class SessionReceipt:
     compliance: Dict[str, Any] = field(default_factory=dict)
     agenda_check: Dict[str, Any] = field(default_factory=dict)
     warnings: List[str] = field(default_factory=list)
+    telemetry: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -486,6 +487,19 @@ Zamknięcie okna roboczego sesji, synchronizacja stanu i weryfikacja integralno�
             except Exception:
                 pass
 
+        telemetry_dict: Dict[str, Any] = {}
+        if t_path is not None:
+            try:
+                from lab_core.telemetry import save_session_telemetry, summarize_session_telemetry
+                summary = summarize_session_telemetry(t_path)
+                telemetry_dict = summary.to_dict()
+                if not dry_run:
+                    db_path = self.vault_root / self.config.get_room_by_role("sqlite-relational").path / "lab_master.db"
+                    if db_path.is_file():
+                        save_session_telemetry(db_path, summary)
+            except Exception:
+                pass
+
         # 3. Wystaw kwit zamknięcia (receipt)
         timestamp_iso = now.astimezone().isoformat()
         receipt_id = f"REC-{now.strftime('%Y%m%d-%H%M%S')}"
@@ -517,6 +531,7 @@ Zamknięcie okna roboczego sesji, synchronizacja stanu i weryfikacja integralno�
             compliance={k: compliance[k] for k in ("status", "reads_before_first_invoke", "write_calls", "violations") if k in compliance},
             agenda_check=agenda_check,
             warnings=proj_warnings,
+            telemetry=telemetry_dict,
         )
 
         return receipt
@@ -584,6 +599,25 @@ def render_terminal_receipt(receipt: SessionReceipt) -> str:
     if receipt.warnings:
         lines.append("OSTRZEŻENIA PROJEKTOWE (PROGRESS-REPORT):")
         lines.extend(f"  {w}" for w in receipt.warnings)
+        lines.append("=" * 64)
+    if receipt.telemetry:
+        t_main = receipt.telemetry.get("main") or {}
+        t_sub = receipt.telemetry.get("subagents") or {}
+        t_tot = receipt.telemetry.get("total") or {}
+        sub_cnt = int(receipt.telemetry.get("subagents_count", 0) or 0)
+        lines.append("TELEMETRIA TOKENÓW SESJI:")
+        lines.append(
+            f"  Sesja główna : in={t_main.get('input_tokens', 0):,} | cache={t_main.get('cache_read_tokens', 0):,} | "
+            f"out={t_main.get('output_tokens', 0):,} | calls={t_main.get('planner_calls', 0)} | peak={t_main.get('peak_context_tokens', 0):,}"
+        )
+        lines.append(
+            f"  Subagenci ({sub_cnt:<2}): in={t_sub.get('input_tokens', 0):,} | cache={t_sub.get('cache_read_tokens', 0):,} | "
+            f"out={t_sub.get('output_tokens', 0):,} | calls={t_sub.get('planner_calls', 0)} | peak={t_sub.get('peak_context_tokens', 0):,}"
+        )
+        lines.append(
+            f"  Łącznie      : in={t_tot.get('input_tokens', 0):,} | cache={t_tot.get('cache_read_tokens', 0):,} | "
+            f"out={t_tot.get('output_tokens', 0):,} | calls={t_tot.get('planner_calls', 0)} | peak={t_tot.get('peak_context_tokens', 0):,}"
+        )
         lines.append("=" * 64)
     return "\n".join(lines)
 

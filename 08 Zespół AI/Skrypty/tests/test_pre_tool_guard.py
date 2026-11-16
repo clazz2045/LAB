@@ -2,12 +2,12 @@
 
 Weryfikuje:
   1. Fast-Path subagentów (<2 ms, paszport natychmiastowy bez blokad).
-  2. Białą listę Koordynatora (odczyt/zapis Agendy, Dashboardu, skryptów sesji, git status).
-  3. Blokadę odczytu plików produkcyjnych (kod, projekty, baza wiedzy).
-  4. Blokadę modyfikacji plików produkcyjnych przez Koordynatora.
-  5. Blokadę narzędzi zwiadu powłokowego (cat, grep, find, awk) oraz chainingu (&&, |).
-  6. Klauzulę Fail-Safe (odporność na błędy wejścia, brak deadlocka).
-  7. Poprawność pliku konfiguracyjnego .agents/hooks.json.
+  2. Otwarty model Read-Only (read_file / view_file) dla Koordynatora w sesji głównej.
+  3. Białą listę zapisu Koordynatora (Agenda, Dashboard, brain/tmp) oraz twardą blokadę zapisu
+     plików produkcyjnych (kod, projekty, baza wiedzy).
+  4. Blokadę narzędzi zwiadu powłokowego (cat, grep, find, awk) oraz chainingu (&&, |).
+  5. Klauzulę Fail-Safe (odporność na błędy wejścia, brak deadlocka).
+  6. Poprawność pliku konfiguracyjnego .agents/hooks.json.
 
 Standard: 100% Python Standard Library (Zero-Pip).
 """
@@ -29,12 +29,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from lab_core.pre_tool_guard import (
     DENY_REASON_COMMAND,
-    DENY_REASON_READ,
     DENY_REASON_RECON,
+    DENY_REASON_RESEARCH_MODEL,
+    DENY_REASON_SUBAGENT_MISSING_MODEL,
     DENY_REASON_WRITE,
     evaluate_pre_tool,
     is_allowed_coordinator_command,
-    is_allowed_coordinator_read,
+    is_allowed_coordinator_subagent,
     is_allowed_coordinator_write,
     is_subagent_session,
     main,
@@ -137,50 +138,31 @@ class TestCoordinatorReadGuard(unittest.TestCase):
     def tearDown(self) -> None:
         shutil.rmtree(self.temp_vault, ignore_errors=True)
 
-    def test_allowed_reads(self) -> None:
-        allowed = [
+    def test_read_only_allows_single_file_reads_for_coordinator(self) -> None:
+        """Koordynator w sesji głównej może czytać dowolne pliki (model Read-Only, brak blokady read_file)."""
+        paths = [
             "02 Warsztat/2026-11-12 – Agenda Robocza.md",
             "02 Warsztat/Dashboard LAB.md",
             "AGENTS.md",
             "GEMINI.md",
             "lab.config.toml",
             "08 Zespół AI/Role/Koordynator/AGENT.md",
-            "/tmp/temp_debug.txt",
-            str(Path.home() / ".gemini" / "antigravity" / "brain" / "session-123" / "transcript.jsonl"),
-        ]
-        for path_str in allowed:
-            self.assertTrue(
-                is_allowed_coordinator_read(path_str, self.temp_vault),
-                f"Should allow read: {path_str}",
-            )
-            payload = {
-                "toolCall": {"name": "read_file", "args": {"Path": path_str}},
-                "transcriptPath": str(self.coord_transcript),
-            }
-            res = evaluate_pre_tool(payload, vault_root=self.temp_vault)
-            self.assertEqual(res.get("decision"), "allow", f"Evaluation failed for {path_str}")
-
-    def test_denied_reads(self) -> None:
-        denied = [
             "08 Zespół AI/Skrypty/session_bootstrap.py",
             "05 Baza Wiedzy/Architektura.md",
             "03 Projekty/PR-017 LAB 3.0/Produkt/file.md",
             "04 Operacje/Procedury/SOP.md",
             "06 Zasoby/Notatki/ref.md",
-            "07 Bazy Danych/lab_master.db",
+            "/tmp/temp_debug.txt",
+            str(Path.home() / ".gemini" / "antigravity" / "brain" / "session-123" / "transcript.jsonl"),
         ]
-        for path_str in denied:
-            self.assertFalse(
-                is_allowed_coordinator_read(path_str, self.temp_vault),
-                f"Should deny read: {path_str}",
-            )
-            payload = {
-                "toolCall": {"name": "read_file", "args": {"Path": path_str}},
-                "transcriptPath": str(self.coord_transcript),
-            }
-            res = evaluate_pre_tool(payload, vault_root=self.temp_vault)
-            self.assertEqual(res.get("decision"), "deny", f"Should deny {path_str}")
-            self.assertEqual(res.get("reason"), DENY_REASON_READ)
+        for path_str in paths:
+            for tool_name in ("read_file", "view_file"):
+                payload = {
+                    "toolCall": {"name": tool_name, "args": {"Path": path_str}},
+                    "transcriptPath": str(self.coord_transcript),
+                }
+                res = evaluate_pre_tool(payload, vault_root=self.temp_vault)
+                self.assertEqual(res.get("decision"), "allow", f"Should allow {tool_name} for {path_str}")
 
 
 class TestCoordinatorWriteGuard(unittest.TestCase):
@@ -343,6 +325,106 @@ class TestFailSafeFallback(unittest.TestCase):
         self.assertEqual(res.get("decision"), "allow")
 
 
+class TestCoordinatorSubagentGuard(unittest.TestCase):
+    """Testy weryfikacji wywołań invoke_subagent w sesji głównej Koordynatora."""
+
+    def setUp(self) -> None:
+        self.temp_vault = Path(tempfile.mkdtemp(prefix="lab_vault_subagent_test_"))
+        self.coord_transcript = self.temp_vault / "transcript.jsonl"
+        self.coord_transcript.write_text(
+            json.dumps({"step_index": 0, "source": "USER_EXPLICIT", "content": "Start"}) + "\n",
+            encoding="utf-8",
+        )
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.temp_vault, ignore_errors=True)
+
+    def test_missing_or_empty_model_is_denied(self) -> None:
+        cases = [
+            {},
+            {"TypeName": "self"},
+            {"TypeName": "research"},
+            {"TypeName": "self", "Model": ""},
+            {"TypeName": "self", "Model": "   "},
+            {"type_name": "research", "model": None},
+        ]
+        for args in cases:
+            ok, reason = is_allowed_coordinator_subagent(args)
+            self.assertFalse(ok, f"Expected deny for args: {args}")
+            self.assertEqual(reason, DENY_REASON_SUBAGENT_MISSING_MODEL)
+
+            payload = {
+                "toolCall": {"name": "invoke_subagent", "args": args},
+                "transcriptPath": str(self.coord_transcript),
+            }
+            res = evaluate_pre_tool(payload, vault_root=self.temp_vault)
+            self.assertEqual(res.get("decision"), "deny")
+            self.assertEqual(res.get("reason"), DENY_REASON_SUBAGENT_MISSING_MODEL)
+
+    def test_research_subagent_model_enforcement(self) -> None:
+        # Zabronione dla research: inherit, pro oraz inne
+        denied_models = ["inherit", "pro", "INHERIT", "PRO", "ultra"]
+        for m in denied_models:
+            args = {"TypeName": "research", "Model": m}
+            ok, reason = is_allowed_coordinator_subagent(args)
+            self.assertFalse(ok, f"Expected deny for research with model={m}")
+            self.assertEqual(reason, DENY_REASON_RESEARCH_MODEL)
+
+            payload = {
+                "toolCall": {"name": "invoke_subagent", "args": args},
+                "transcriptPath": str(self.coord_transcript),
+            }
+            res = evaluate_pre_tool(payload, vault_root=self.temp_vault)
+            self.assertEqual(res.get("decision"), "deny")
+            self.assertEqual(res.get("reason"), DENY_REASON_RESEARCH_MODEL)
+
+        # Dozwolone dla research: flash, flash_lite (case-insensitive)
+        allowed_models = ["flash", "flash_lite", "FLASH", "Flash_Lite", "  flash  "]
+        for m in allowed_models:
+            args = {"TypeName": "research", "Model": m}
+            ok, reason = is_allowed_coordinator_subagent(args)
+            self.assertTrue(ok, f"Expected allow for research with model={m}")
+            self.assertIsNone(reason)
+
+            payload = {
+                "toolCall": {"name": "invoke_subagent", "args": args},
+                "transcriptPath": str(self.coord_transcript),
+            }
+            res = evaluate_pre_tool(payload, vault_root=self.temp_vault)
+            self.assertEqual(res.get("decision"), "allow")
+
+    def test_self_subagent_model_enforcement(self) -> None:
+        # Dozwolone dla self: flash, flash_lite, inherit, pro
+        allowed_models = ["flash", "flash_lite", "inherit", "pro", "FLASH", "Inherit", "PRO"]
+        for m in allowed_models:
+            args = {"TypeName": "self", "Model": m}
+            ok, reason = is_allowed_coordinator_subagent(args)
+            self.assertTrue(ok, f"Expected allow for self with model={m}")
+            self.assertIsNone(reason)
+
+            payload = {
+                "toolCall": {"name": "invoke_subagent", "args": args},
+                "transcriptPath": str(self.coord_transcript),
+            }
+            res = evaluate_pre_tool(payload, vault_root=self.temp_vault)
+            self.assertEqual(res.get("decision"), "allow")
+
+        # Niedozwolony model dla self (np. nieznany string)
+        args_invalid = {"TypeName": "self", "Model": "invalid_model"}
+        ok, reason = is_allowed_coordinator_subagent(args_invalid)
+        self.assertFalse(ok)
+        self.assertIn("Niedozwolona wartość", reason or "")
+
+    def test_alternative_keys_supported(self) -> None:
+        payload = {
+            "tool_name": "invoke_subagent",
+            "tool_input": {"type_name": "research", "model": "flash"},
+            "transcript_path": str(self.coord_transcript),
+        }
+        res = evaluate_pre_tool(payload, vault_root=self.temp_vault)
+        self.assertEqual(res.get("decision"), "allow")
+
+
 class TestHooksJsonConfig(unittest.TestCase):
     """Weryfikacja konfiguracji .agents/hooks.json w korzeniu skarbca."""
 
@@ -363,7 +445,7 @@ class TestHooksJsonConfig(unittest.TestCase):
 
         rule = ptu[0]
         matcher = rule.get("matcher", "")
-        for tool in ("run_command", "read_file", "write_file", "edit_file"):
+        for tool in ("run_command", "read_file", "write_file", "edit_file", "invoke_subagent"):
             self.assertIn(tool, matcher)
 
         hooks_list = rule.get("hooks", [])

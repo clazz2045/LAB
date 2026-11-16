@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 import sys
 import unicodedata
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 sys.dont_write_bytecode = True
 
@@ -18,6 +18,8 @@ MAX_DISTILLATE_TOKENS = 600
 CHARS_PER_TOKEN = 4
 MAX_RAW_DUMP_LINES = 40
 MAX_LINE_CHARS = 800
+
+_URL_PATTERN = re.compile(r"(?:https?|file)://[^\s)\]>\"']+", re.IGNORECASE)
 
 # Nagłówek sekcji na początku linii: opcjonalny markdown (#, *, -, >, cyfry) + słowo kluczowe + dwukropek/koniec
 _SECTION_PREFIX = r"^[\s#>*\-\d.)_]*"
@@ -42,19 +44,21 @@ def _strip_diacritics(text: str) -> str:
 
 
 def estimate_tokens(text: str) -> int:
-    """Szacunkowa liczba tokenów (heurystyka znakowa)."""
-    return (len(text) + CHARS_PER_TOKEN - 1) // CHARS_PER_TOKEN
+    """Szacunkowa liczba tokenów (heurystyka znakowa, ignoruje URL-e http://, https://, file:///)."""
+    cleaned = _URL_PATTERN.sub("", text)
+    return (len(cleaned) + CHARS_PER_TOKEN - 1) // CHARS_PER_TOKEN
 
 
-def validate_sat_distillate(text: str) -> Tuple[bool, List[str]]:
+def validate_sat_distillate(text: str, max_tokens: Optional[int] = None) -> Tuple[bool, List[str]]:
     """Zwraca (ok, lista_problemów) dla destylatu SAT."""
     problems: List[str] = []
     if not text or not text.strip():
         return False, ["Pusty destylat."]
 
+    limit = max_tokens if max_tokens is not None and max_tokens > 0 else MAX_DISTILLATE_TOKENS
     tokens = estimate_tokens(text)
-    if tokens > MAX_DISTILLATE_TOKENS:
-        problems.append(f"Destylat przekracza limit: ~{tokens} tokenów (max {MAX_DISTILLATE_TOKENS}).")
+    if tokens > limit:
+        problems.append(f"Destylat przekracza limit: ~{tokens} tokenów (max {limit}).")
 
     lines = text.splitlines()
     if len(lines) > MAX_RAW_DUMP_LINES:

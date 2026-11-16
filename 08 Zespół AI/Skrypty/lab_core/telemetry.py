@@ -15,13 +15,16 @@ Zastosowanie:
 from __future__ import annotations
 
 import argparse
+from collections import deque
 from dataclasses import asdict, dataclass
+from datetime import date, datetime, timedelta, timezone
 import json
 import os
 from pathlib import Path
 import re
+import sqlite3
 import sys
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 # Blokada tworzenia folderów __pycache__ w przestrzeni skarbca LAB
 sys.dont_write_bytecode = True
@@ -103,6 +106,103 @@ class TokenMetrics:
         data = asdict(self)
         data["statusline"] = format_statusline(self)
         return data
+
+
+@dataclass(frozen=True)
+class UsageTotals:
+    """Zagregowane sumy zużycia tokenów i wywołań planera."""
+    input_tokens: int = 0
+    cache_read_tokens: int = 0
+    output_tokens: int = 0
+    planner_calls: int = 0
+    peak_context_tokens: int = 0
+
+    def to_dict(self) -> Dict[str, int]:
+        return asdict(self)
+
+    def add(self, other: "UsageTotals") -> "UsageTotals":
+        return UsageTotals(
+            input_tokens=self.input_tokens + other.input_tokens,
+            cache_read_tokens=self.cache_read_tokens + other.cache_read_tokens,
+            output_tokens=self.output_tokens + other.output_tokens,
+            planner_calls=self.planner_calls + other.planner_calls,
+            peak_context_tokens=max(self.peak_context_tokens, other.peak_context_tokens),
+        )
+
+
+@dataclass(frozen=True)
+class SessionSummary:
+    """Podsumowanie zużycia tokenów sesji głównej wraz z powiązanymi subagentami."""
+    session_id: str
+    session_date: str
+    transcript_path: str
+    subagents_count: int
+    subagent_ids: Tuple[str, ...]
+    main: UsageTotals
+    subagents: UsageTotals
+    total: UsageTotals
+    limit: int = DEFAULT_WINDOW_LIMIT
+    load_zone: str = ZONE_COMFORT
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "session_id": self.session_id,
+            "session_date": self.session_date,
+            "transcript_path": self.transcript_path,
+            "subagents_count": self.subagents_count,
+            "subagent_ids": list(self.subagent_ids),
+            "limit": self.limit,
+            "load_zone": self.load_zone,
+            "main": self.main.to_dict(),
+            "subagents": self.subagents.to_dict(),
+            "total": self.total.to_dict(),
+        }
+
+
+@dataclass(frozen=True)
+class DailyTelemetryRow:
+    """Dzienne zestawienie zużycia tokenów."""
+    date: str
+    sessions_count: int
+    subagents_count: int
+    main: UsageTotals
+    subagents: UsageTotals
+    total: UsageTotals
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "date": self.date,
+            "sessions_count": self.sessions_count,
+            "subagents_count": self.subagents_count,
+            "main": self.main.to_dict(),
+            "subagents": self.subagents.to_dict(),
+            "total": self.total.to_dict(),
+        }
+
+
+@dataclass(frozen=True)
+class TelemetryReport:
+    """Okresowy raport zużycia tokenów (sesje główne vs subagenci)."""
+    date_from: str
+    date_to: str
+    days: Tuple[DailyTelemetryRow, ...]
+    sessions_count: int
+    subagents_count: int
+    main: UsageTotals
+    subagents: UsageTotals
+    total: UsageTotals
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "date_from": self.date_from,
+            "date_to": self.date_to,
+            "sessions_count": self.sessions_count,
+            "subagents_count": self.subagents_count,
+            "main": self.main.to_dict(),
+            "subagents": self.subagents.to_dict(),
+            "total": self.total.to_dict(),
+            "days": [d.to_dict() for d in self.days],
+        }
 
 
 # ==============================================================================
@@ -349,6 +449,727 @@ def parse_telemetry(
 
 
 # ==============================================================================
+# AGREGACJA SESJI, SUBAGENTÓW I RAPORTOWANIE OKRESOWE (WARIANT B)
+# ==============================================================================
+
+_CONV_ID_PATTERNS = (
+    re.compile(r'["\']?conversationId["\']?\s*[:=]\s*["\']?([0-9a-fA-F-]{8,}|[A-Za-z0-9._-]{4,})["\']?'),
+    re.compile(r'["\']?conversation_id["\']?\s*[:=]\s*["\']?([0-9a-fA-F-]{8,}|[A-Za-z0-9._-]{4,})["\']?'),
+)
+_SENDER_RE = re.compile(r'\bsender=([0-9a-fA-F-]{8,}|[A-Za-z0-9._-]{4,})\b')
+_PARENT_ID_RE = re.compile(r'\bname:\s*"parent",\s*id:\s*"([^"]+)"')
+_IGNORED_IDS = frozenset({"parent", "user", "system", "MODEL", "SYSTEM", "USER_EXPLICIT", "none", "null"})
+
+
+def _extract_usage_from_entry(data: Dict[str, Any]) -> Optional[Tuple[int, int, int, Optional[int]]]:
+    """Wyciąga (input_tokens, cache_read_tokens, output_tokens, step_index) z kroku JSONL."""
+    if "input_tokens" in data:
+        try:
+            in_tok = int(data.get("input_tokens", 0) or 0)
+            cache_tok = int(data.get("cache_read_tokens", 0) or 0)
+            out_tok = int(data.get("output_tokens", 0) or 0)
+            step_idx = data.get("step_index")
+            return in_tok, cache_tok, out_tok, int(step_idx) if step_idx is not None else None
+        except (ValueError, TypeError):
+            return None
+
+    msg_usage = (data.get("message") or {}).get("usage") if isinstance(data.get("message"), dict) else None
+    usage = msg_usage if isinstance(msg_usage, dict) else (data.get("usage") if isinstance(data.get("usage"), dict) else None)
+    if usage and "input_tokens" in usage:
+        try:
+            in_tok = int(usage.get("input_tokens", 0) or 0)
+            cache_tok = (
+                int(usage.get("cache_read_input_tokens", 0) or 0)
+                + int(usage.get("cache_creation_input_tokens", 0) or 0)
+            )
+            out_tok = int(usage.get("output_tokens", 0) or 0)
+            step_idx = data.get("step_index")
+            return in_tok, cache_tok, out_tok, int(step_idx) if step_idx is not None else None
+        except (ValueError, TypeError):
+            return None
+    return None
+
+
+def _preferred_transcript_file(transcript_path: Path) -> Path:
+    """Preferuje transcript_full.jsonl (pełne pola bez obcięcia), jeśli jest dostępny."""
+    full_path = transcript_path.parent / "transcript_full.jsonl"
+    if full_path.is_file() and os.access(full_path, os.R_OK):
+        return full_path
+    return transcript_path
+
+
+def _infer_session_id(transcript_path: Path) -> str:
+    """Wyznacza session_id (conversationId) ze ścieżki transkryptu."""
+    resolved = transcript_path.resolve()
+    parts = resolved.parts
+    if len(parts) >= 4 and parts[-2] == "logs" and parts[-3] == ".system_generated":
+        return parts[-4]
+    return resolved.stem
+
+
+def _infer_brain_dir(transcript_path: Path, brain_dir: Optional[Union[str, Path]] = None) -> Path:
+    """Wyznacza katalog brain zawierający sesje."""
+    if brain_dir:
+        return Path(brain_dir).expanduser().resolve()
+    resolved = transcript_path.resolve()
+    parts = resolved.parts
+    if len(parts) >= 5 and parts[-2] == "logs" and parts[-3] == ".system_generated":
+        return resolved.parents[3]
+    return Path.home() / ".gemini" / "antigravity" / "brain"
+
+
+def _parse_iso_date(raw_ts: str) -> Optional[str]:
+    """Konwertuje znacznik czasu ISO-8601 na datę lokalną YYYY-MM-DD."""
+    text = raw_ts.strip()
+    if not text:
+        return None
+    try:
+        iso_norm = text[:-1] + "+00:00" if text.endswith("Z") else text
+        dt = datetime.fromisoformat(iso_norm)
+        if dt.tzinfo is not None:
+            dt = dt.astimezone()
+        return dt.date().isoformat()
+    except ValueError:
+        if len(text) >= 10 and re.match(r"^\d{4}-\d{2}-\d{2}", text[:10]):
+            return text[:10]
+    return None
+
+
+def _extract_session_date(transcript_path: Path) -> str:
+    """Ustala datę sesji na podstawie created_at/timestamp w transkrypcie lub mtime pliku."""
+    try:
+        with open(transcript_path, "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                line_s = line.strip()
+                if not line_s:
+                    continue
+                try:
+                    data = json.loads(line_s)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(data, dict):
+                    for key in ("created_at", "timestamp"):
+                        val = data.get(key)
+                        if isinstance(val, str):
+                            parsed = _parse_iso_date(val)
+                            if parsed:
+                                return parsed
+    except OSError:
+        pass
+    try:
+        mtime = transcript_path.stat().st_mtime
+        return datetime.fromtimestamp(mtime).date().isoformat()
+    except OSError:
+        return date.today().isoformat()
+
+
+def _is_subagent_transcript(transcript_path: Path) -> bool:
+    """Sprawdza, czy transkrypt należy do subagenta (<subagent_reminder>)."""
+    target = _preferred_transcript_file(transcript_path)
+    try:
+        with open(target, "r", encoding="utf-8", errors="replace") as f:
+            for idx, line in enumerate(f):
+                if idx >= 8:
+                    break
+                if "<subagent_reminder>" in line or "You are running as a subagent" in line:
+                    return True
+    except OSError:
+        pass
+    return False
+
+
+def _parse_tool_calls_field(raw_calls: Any) -> List[Dict[str, Any]]:
+    """Normalizuje pole tool_calls (lista słowników lub zserializowany JSON/repr)."""
+    if isinstance(raw_calls, list):
+        return [tc for tc in raw_calls if isinstance(tc, dict)]
+    if isinstance(raw_calls, str):
+        text = raw_calls.strip()
+        if text.startswith("["):
+            try:
+                parsed = json.loads(text)
+                if isinstance(parsed, list):
+                    return [tc for tc in parsed if isinstance(tc, dict)]
+            except json.JSONDecodeError:
+                pass
+    return []
+
+
+def _extract_ids_from_text(text: str) -> List[str]:
+    """Wyciąga potencjalne conversationId z tekstu odpowiedzi narzędzia."""
+    found: List[str] = []
+    for pat in _CONV_ID_PATTERNS:
+        for match in pat.findall(text):
+            if match and match not in _IGNORED_IDS and match not in found:
+                found.append(match)
+    return found
+
+
+def extract_subagent_ids(transcript_path: Union[str, Path]) -> List[str]:
+    """Wyciąga unikalne conversationId subagentów wywołanych z danego transkryptu."""
+    path = Path(transcript_path).expanduser().resolve()
+    if not path.is_file():
+        return []
+    scan_path = _preferred_transcript_file(path)
+    self_id = _infer_session_id(path)
+    parent_ids: Set[str] = set()
+    subagent_ids: List[str] = []
+    seen_invoke = False
+
+    def _add_candidate(cid: str) -> None:
+        clean = cid.strip()
+        if not clean or clean == self_id or clean in parent_ids or clean in _IGNORED_IDS:
+            return
+        if clean not in subagent_ids:
+            subagent_ids.append(clean)
+
+    try:
+        with open(scan_path, "r", encoding="utf-8", errors="replace") as f:
+            for step_num, line in enumerate(f):
+                line_s = line.strip()
+                if not line_s:
+                    continue
+                try:
+                    data = json.loads(line_s)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(data, dict):
+                    continue
+
+                step_type = str(data.get("type") or "")
+                content_str = str(data.get("content") or "")
+
+                # Rozpoznaj ID rodzica z <subagent_reminder>, aby nigdy nie traktować go jak subagenta
+                if "<subagent_reminder>" in content_str:
+                    for pm in _PARENT_ID_RE.findall(content_str):
+                        parent_ids.add(pm)
+                    for sm in _SENDER_RE.findall(content_str):
+                        parent_ids.add(sm)
+                    continue
+
+                if step_num == 0 and step_type == "SYSTEM_MESSAGE":
+                    for sm in _SENDER_RE.findall(content_str):
+                        parent_ids.add(sm)
+                    continue
+
+                # 1. Wywołania narzędzi (invoke_subagent / send_message)
+                for tc in _parse_tool_calls_field(data.get("tool_calls")):
+                    name = str(tc.get("name") or tc.get("tool_name") or "")
+                    if name == "invoke_subagent":
+                        seen_invoke = True
+                        for key in ("conversationId", "conversation_id"):
+                            val = tc.get(key)
+                            if isinstance(val, str):
+                                _add_candidate(val)
+                        for resp_key in ("response", "result", "output"):
+                            resp = tc.get(resp_key)
+                            if resp is not None:
+                                for cid in _extract_ids_from_text(json.dumps(resp) if isinstance(resp, dict) else str(resp)):
+                                    _add_candidate(cid)
+                    elif name == "send_message":
+                        args = tc.get("args") or tc.get("arguments") or {}
+                        if isinstance(args, str):
+                            try:
+                                args = json.loads(args)
+                            except json.JSONDecodeError:
+                                args = {}
+                        if isinstance(args, dict):
+                            recipient = args.get("Recipient") or args.get("recipient")
+                            if isinstance(recipient, str):
+                                _add_candidate(recipient)
+
+                # Fallback na obcięte tool_calls jako tekst w transcript.jsonl
+                raw_tc = data.get("tool_calls")
+                if isinstance(raw_tc, str) and "invoke_subagent" in raw_tc:
+                    seen_invoke = True
+                    for cid in _extract_ids_from_text(raw_tc):
+                        _add_candidate(cid)
+
+                # 2. Odpowiedzi narzędzi (GENERIC) po invoke_subagent lub zawierające conversationId
+                if step_type == "GENERIC" and (seen_invoke or "conversationId" in content_str or "conversation_id" in content_str):
+                    for cid in _extract_ids_from_text(content_str):
+                        _add_candidate(cid)
+
+                # 3. Komunikaty SYSTEM_MESSAGE od powracających subagentów
+                if step_type == "SYSTEM_MESSAGE" and seen_invoke:
+                    for sm in _SENDER_RE.findall(content_str):
+                        _add_candidate(sm)
+                    for cid in _extract_ids_from_text(content_str):
+                        _add_candidate(cid)
+    except OSError:
+        return []
+
+    return subagent_ids
+
+
+def collect_related_subagents(
+    transcript_path: Union[str, Path],
+    brain_dir: Optional[Union[str, Path]] = None,
+) -> List[Tuple[str, Path]]:
+    """Zwraca listę (conversationId, path) powiązanych subagentów (BFS z ochroną przed cyklami)."""
+    root_path = Path(transcript_path).expanduser().resolve()
+    root_id = _infer_session_id(root_path)
+    b_dir = _infer_brain_dir(root_path, brain_dir=brain_dir)
+
+    visited: Set[str] = {root_id}
+    queue: deque[Path] = deque([root_path])
+    found: List[Tuple[str, Path]] = []
+
+    while queue:
+        curr_path = queue.popleft()
+        for cid in extract_subagent_ids(curr_path):
+            if cid in visited:
+                continue
+            visited.add(cid)
+            cand = b_dir / cid / ".system_generated" / "logs" / "transcript.jsonl"
+            if cand.is_file():
+                found.append((cid, cand))
+                queue.append(cand)
+
+    return found
+
+
+def aggregate_transcript_usage(transcript_path: Union[str, Path]) -> Tuple[UsageTotals, int]:
+    """Sumuje wszystkie kroki tokenów w jednym pliku transcript.jsonl.
+
+    Zwraca (UsageTotals, last_context_tokens).
+    """
+    path = Path(transcript_path).expanduser().resolve()
+    if not path.is_file():
+        raise TranscriptNotFoundError(f"Plik transkryptu nie istnieje: {path}")
+
+    in_sum = 0
+    cache_sum = 0
+    out_sum = 0
+    calls = 0
+    peak_ctx = 0
+    last_ctx = 0
+
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                line_s = line.strip()
+                if not line_s:
+                    continue
+                try:
+                    data = json.loads(line_s)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(data, dict):
+                    continue
+                extracted = _extract_usage_from_entry(data)
+                if extracted is None:
+                    continue
+                in_tok, cache_tok, out_tok, _ = extracted
+                in_sum += in_tok
+                cache_sum += cache_tok
+                out_sum += out_tok
+                calls += 1
+                ctx = in_tok + cache_tok
+                last_ctx = ctx
+                if ctx > peak_ctx:
+                    peak_ctx = ctx
+    except OSError as e:
+        raise TelemetryDataError(f"Błąd wejścia/wyjścia podczas odczytu {path}: {e}") from e
+
+    return (
+        UsageTotals(
+            input_tokens=in_sum,
+            cache_read_tokens=cache_sum,
+            output_tokens=out_sum,
+            planner_calls=calls,
+            peak_context_tokens=peak_ctx,
+        ),
+        last_ctx,
+    )
+
+
+def summarize_session_telemetry(
+    transcript_path: Union[str, Path],
+    brain_dir: Optional[Union[str, Path]] = None,
+    limit: int = DEFAULT_WINDOW_LIMIT,
+) -> SessionSummary:
+    """Oblicza podsumowanie zużycia tokenów dla sesji głównej, jej subagentów i łącznie."""
+    path = Path(transcript_path).expanduser().resolve()
+    main_totals, last_ctx = aggregate_transcript_usage(path)
+    related = collect_related_subagents(path, brain_dir=brain_dir)
+
+    sub_totals = UsageTotals()
+    sub_ids: List[str] = []
+    for cid, sub_path in related:
+        sub_ids.append(cid)
+        try:
+            u, _ = aggregate_transcript_usage(sub_path)
+            sub_totals = sub_totals.add(u)
+        except TelemetryError:
+            continue
+
+    total_totals = main_totals.add(sub_totals)
+    zone, _, _ = calculate_zone(last_ctx, limit=limit)
+
+    return SessionSummary(
+        session_id=_infer_session_id(path),
+        session_date=_extract_session_date(path),
+        transcript_path=str(path),
+        subagents_count=len(sub_ids),
+        subagent_ids=tuple(sub_ids),
+        main=main_totals,
+        subagents=sub_totals,
+        total=total_totals,
+        limit=limit,
+        load_zone=zone,
+    )
+
+
+def resolve_master_db_path(db_path: Optional[Union[str, Path]] = None) -> Optional[Path]:
+    """Rozwiązuje ścieżkę do lab_master.db przez ConfigManager."""
+    if db_path:
+        return Path(db_path).expanduser().resolve()
+    if ConfigManager is not None:
+        try:
+            cm = ConfigManager()
+            db_room = cm.get_room_by_role("sqlite-relational")
+            return cm.get_room_path(db_room.id, absolute=True) / "lab_master.db"
+        except Exception:
+            pass
+    if _vault_root is not None:
+        return _vault_root / "07 Bazy Danych" / "lab_master.db"
+    return None
+
+
+def save_session_telemetry(
+    db_path: Union[str, Path],
+    summary: SessionSummary,
+    session_id_override: Optional[str] = None,
+    session_number: int = 0,
+) -> int:
+    """Zapisuje podsumowanie sesji do session_telemetry (idempotentny UPSERT po session_id)."""
+    from lab_core.schema import ensure_telemetry_columns, get_master_db_connection, init_master_db
+
+    target_db = Path(db_path).expanduser().resolve()
+    if not target_db.is_file():
+        init_master_db(target_db)
+
+    sid = session_id_override or summary.session_id
+    now_iso = datetime.now(timezone.utc).isoformat()
+    tokens_active = summary.main.peak_context_tokens
+
+    conn = get_master_db_connection(target_db)
+    try:
+        with conn:
+            ensure_telemetry_columns(conn)
+            existing = conn.execute(
+                "SELECT id FROM session_telemetry WHERE session_id = ? ORDER BY id DESC LIMIT 1",
+                (sid,),
+            ).fetchone()
+
+            values = (
+                sid,
+                summary.session_date,
+                int(session_number),
+                int(tokens_active),
+                int(summary.limit),
+                summary.load_zone,
+                now_iso,
+                int(summary.main.input_tokens),
+                int(summary.main.cache_read_tokens),
+                int(summary.main.output_tokens),
+                int(summary.main.planner_calls),
+                int(summary.subagents_count),
+                int(summary.subagents.input_tokens),
+                int(summary.subagents.cache_read_tokens),
+                int(summary.subagents.output_tokens),
+                int(summary.subagents.planner_calls),
+                int(summary.total.peak_context_tokens),
+            )
+
+            if existing is not None:
+                row_id = int(existing["id"])
+                conn.execute(
+                    """
+                    UPDATE session_telemetry SET
+                        session_id = ?,
+                        session_date = ?,
+                        session_number = ?,
+                        tokens_active = ?,
+                        tokens_limit = ?,
+                        load_zone = ?,
+                        timestamp = ?,
+                        input_tokens = ?,
+                        cache_read_tokens = ?,
+                        output_tokens = ?,
+                        planner_calls = ?,
+                        subagents_count = ?,
+                        subagents_input_tokens = ?,
+                        subagents_cache_read_tokens = ?,
+                        subagents_output_tokens = ?,
+                        subagents_planner_calls = ?,
+                        peak_context_tokens = ?
+                    WHERE id = ?
+                    """,
+                    (*values, row_id),
+                )
+                return row_id
+
+            cur = conn.execute(
+                """
+                INSERT INTO session_telemetry (
+                    session_id, session_date, session_number, tokens_active, tokens_limit,
+                    load_zone, timestamp, input_tokens, cache_read_tokens, output_tokens,
+                    planner_calls, subagents_count, subagents_input_tokens,
+                    subagents_cache_read_tokens, subagents_output_tokens,
+                    subagents_planner_calls, peak_context_tokens
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                values,
+            )
+            return int(cur.lastrowid)
+    finally:
+        conn.close()
+
+
+def _parse_report_range(
+    days: int = 7,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    reference_date: Optional[date] = None,
+) -> Tuple[str, str]:
+    """Oblicza zakres dat [date_from, date_to] w formacie YYYY-MM-DD."""
+    end_dt = reference_date or date.today()
+    if date_to:
+        try:
+            end_dt = date.fromisoformat(date_to)
+        except ValueError as e:
+            raise TelemetryDataError(f"Niepoprawny format daty --to '{date_to}' (wymagane YYYY-MM-DD).") from e
+
+    if date_from:
+        try:
+            start_dt = date.fromisoformat(date_from)
+        except ValueError as e:
+            raise TelemetryDataError(f"Niepoprawny format daty --from '{date_from}' (wymagane YYYY-MM-DD).") from e
+    else:
+        span = max(int(days), 1)
+        start_dt = end_dt - timedelta(days=span - 1)
+
+    if start_dt > end_dt:
+        raise TelemetryDataError(f"Zakres dat jest niepoprawny: {start_dt} > {end_dt}.")
+    return start_dt.isoformat(), end_dt.isoformat()
+
+
+def generate_telemetry_report(
+    brain_dir: Optional[Union[str, Path]] = None,
+    db_path: Optional[Union[str, Path]] = None,
+    days: int = 7,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    reference_date: Optional[date] = None,
+) -> TelemetryReport:
+    """Generuje zestawienie dzienne oraz sumę za okres (sesje główne vs subagenci)."""
+    start_str, end_str = _parse_report_range(
+        days=days, date_from=date_from, date_to=date_to, reference_date=reference_date
+    )
+
+    b_dir = Path(brain_dir).expanduser().resolve() if brain_dir else (Path.home() / ".gemini" / "antigravity" / "brain")
+    daily_buckets: Dict[str, Dict[str, Any]] = {}
+
+    def _bucket(d_str: str) -> Dict[str, Any]:
+        if d_str not in daily_buckets:
+            daily_buckets[d_str] = {
+                "sessions_count": 0,
+                "subagents_count": 0,
+                "main": UsageTotals(),
+                "subagents": UsageTotals(),
+            }
+        return daily_buckets[d_str]
+
+    seen_cids: Set[str] = set()
+
+    if b_dir.is_dir():
+        transcripts = sorted(b_dir.glob("*/.system_generated/logs/transcript.jsonl"))
+        main_candidates: List[Path] = []
+        sub_candidates: List[Path] = []
+        for tr in transcripts:
+            if not tr.is_file():
+                continue
+            if _is_subagent_transcript(tr):
+                sub_candidates.append(tr)
+            else:
+                main_candidates.append(tr)
+
+        for tr in main_candidates:
+            cid = _infer_session_id(tr)
+            if cid in seen_cids:
+                continue
+            try:
+                summary = summarize_session_telemetry(tr, brain_dir=b_dir)
+            except TelemetryError:
+                continue
+            seen_cids.add(cid)
+            for sub_id in summary.subagent_ids:
+                seen_cids.add(sub_id)
+            if start_str <= summary.session_date <= end_str:
+                b = _bucket(summary.session_date)
+                b["sessions_count"] += 1
+                b["subagents_count"] += summary.subagents_count
+                b["main"] = b["main"].add(summary.main)
+                b["subagents"] = b["subagents"].add(summary.subagents)
+
+        # Osierocone transkrypty subagentów (których rodzic nie istnieje już w brain/)
+        for tr in sub_candidates:
+            cid = _infer_session_id(tr)
+            if cid in seen_cids:
+                continue
+            seen_cids.add(cid)
+            s_date = _extract_session_date(tr)
+            if not (start_str <= s_date <= end_str):
+                continue
+            try:
+                u, _ = aggregate_transcript_usage(tr)
+            except TelemetryError:
+                continue
+            b = _bucket(s_date)
+            b["subagents_count"] += 1
+            b["subagents"] = b["subagents"].add(u)
+
+    # Uzupełnienie historycznymi rekordami z session_telemetry (jeśli brak danego session_id w brain/)
+    resolved_db = resolve_master_db_path(db_path)
+    if resolved_db is not None and resolved_db.is_file():
+        try:
+            from lab_core.schema import ensure_telemetry_columns, get_master_db_connection
+            conn = get_master_db_connection(resolved_db)
+            try:
+                ensure_telemetry_columns(conn)
+                rows = conn.execute(
+                    """
+                    SELECT session_id, session_date, tokens_active,
+                           COALESCE(input_tokens, 0) AS input_tokens,
+                           COALESCE(cache_read_tokens, 0) AS cache_read_tokens,
+                           COALESCE(output_tokens, 0) AS output_tokens,
+                           COALESCE(planner_calls, 0) AS planner_calls,
+                           COALESCE(subagents_count, 0) AS subagents_count,
+                           COALESCE(subagents_input_tokens, 0) AS subagents_input_tokens,
+                           COALESCE(subagents_cache_read_tokens, 0) AS subagents_cache_read_tokens,
+                           COALESCE(subagents_output_tokens, 0) AS subagents_output_tokens,
+                           COALESCE(subagents_planner_calls, 0) AS subagents_planner_calls,
+                           COALESCE(peak_context_tokens, 0) AS peak_context_tokens
+                    FROM session_telemetry
+                    WHERE session_date >= ? AND session_date <= ?
+                    """,
+                    (start_str, end_str),
+                ).fetchall()
+                for row in rows:
+                    sid = str(row["session_id"])
+                    if sid in seen_cids:
+                        continue
+                    seen_cids.add(sid)
+                    s_date = str(row["session_date"])
+                    main_u = UsageTotals(
+                        input_tokens=int(row["input_tokens"]),
+                        cache_read_tokens=int(row["cache_read_tokens"]),
+                        output_tokens=int(row["output_tokens"]),
+                        planner_calls=int(row["planner_calls"]),
+                        peak_context_tokens=int(row["tokens_active"] or row["peak_context_tokens"]),
+                    )
+                    sub_u = UsageTotals(
+                        input_tokens=int(row["subagents_input_tokens"]),
+                        cache_read_tokens=int(row["subagents_cache_read_tokens"]),
+                        output_tokens=int(row["subagents_output_tokens"]),
+                        planner_calls=int(row["subagents_planner_calls"]),
+                        peak_context_tokens=int(row["peak_context_tokens"]),
+                    )
+                    b = _bucket(s_date)
+                    b["sessions_count"] += 1
+                    b["subagents_count"] += int(row["subagents_count"])
+                    b["main"] = b["main"].add(main_u)
+                    b["subagents"] = b["subagents"].add(sub_u)
+            finally:
+                conn.close()
+        except sqlite3.Error:
+            pass
+
+    day_rows: List[DailyTelemetryRow] = []
+    tot_sessions = 0
+    tot_subagents = 0
+    tot_main = UsageTotals()
+    tot_sub = UsageTotals()
+
+    for d_str in sorted(daily_buckets.keys()):
+        b = daily_buckets[d_str]
+        m_u: UsageTotals = b["main"]
+        s_u: UsageTotals = b["subagents"]
+        t_u = m_u.add(s_u)
+        day_rows.append(
+            DailyTelemetryRow(
+                date=d_str,
+                sessions_count=b["sessions_count"],
+                subagents_count=b["subagents_count"],
+                main=m_u,
+                subagents=s_u,
+                total=t_u,
+            )
+        )
+        tot_sessions += b["sessions_count"]
+        tot_subagents += b["subagents_count"]
+        tot_main = tot_main.add(m_u)
+        tot_sub = tot_sub.add(s_u)
+
+    return TelemetryReport(
+        date_from=start_str,
+        date_to=end_str,
+        days=tuple(day_rows),
+        sessions_count=tot_sessions,
+        subagents_count=tot_subagents,
+        main=tot_main,
+        subagents=tot_sub,
+        total=tot_main.add(tot_sub),
+    )
+
+
+def format_session_summary(summary: SessionSummary) -> str:
+    """Formatuje zwięzłe podsumowanie zużycia sesji do terminala."""
+    lines = [
+        "=" * 64,
+        "LAB 3.0 • PODSUMOWANIE ZUŻYCIA SESJI (GŁÓWNA + SUBAGENCI)",
+        "=" * 64,
+        f"Sesja ID       : {summary.session_id} ({summary.session_date})",
+        f"Subagenci      : {summary.subagents_count}",
+        "-" * 64,
+        f"Sesja główna   : in={summary.main.input_tokens:,} | cache={summary.main.cache_read_tokens:,} | out={summary.main.output_tokens:,} | calls={summary.main.planner_calls} | peak={format_tokens(summary.main.peak_context_tokens)}",
+        f"Subagenci ({summary.subagents_count:<2}) : in={summary.subagents.input_tokens:,} | cache={summary.subagents.cache_read_tokens:,} | out={summary.subagents.output_tokens:,} | calls={summary.subagents.planner_calls} | peak={format_tokens(summary.subagents.peak_context_tokens)}",
+        f"Łącznie        : in={summary.total.input_tokens:,} | cache={summary.total.cache_read_tokens:,} | out={summary.total.output_tokens:,} | calls={summary.total.planner_calls} | peak={format_tokens(summary.total.peak_context_tokens)}",
+        "=" * 64,
+    ]
+    return "\n".join(lines)
+
+
+def format_telemetry_report(report: TelemetryReport) -> str:
+    """Formatuje okresowy raport dzienny zużycia tokenów."""
+    lines = [
+        "=" * 72,
+        f"LAB 3.0 • RAPORT TELEMETRII ({report.date_from} .. {report.date_to})",
+        "=" * 72,
+    ]
+    if not report.days:
+        lines.append("Brak zarejestrowanych sesji w podanym okresie.")
+    else:
+        for d in report.days:
+            lines.append(
+                f"{d.date} | sesje={d.sessions_count} sub={d.subagents_count} | "
+                f"main(in={format_tokens(d.main.input_tokens)}, out={format_tokens(d.main.output_tokens)}, calls={d.main.planner_calls}) | "
+                f"sub(in={format_tokens(d.subagents.input_tokens)}, out={format_tokens(d.subagents.output_tokens)}, calls={d.subagents.planner_calls}) | "
+                f"sum_out={format_tokens(d.total.output_tokens)}"
+            )
+    lines.extend([
+        "-" * 72,
+        f"SUMA OKRESU    : sesje={report.sessions_count}, subagenci={report.subagents_count}",
+        f"  Sesja główna : in={report.main.input_tokens:,} | cache={report.main.cache_read_tokens:,} | out={report.main.output_tokens:,} | calls={report.main.planner_calls} | peak={format_tokens(report.main.peak_context_tokens)}",
+        f"  Subagenci    : in={report.subagents.input_tokens:,} | cache={report.subagents.cache_read_tokens:,} | out={report.subagents.output_tokens:,} | calls={report.subagents.planner_calls} | peak={format_tokens(report.subagents.peak_context_tokens)}",
+        f"  Łącznie      : in={report.total.input_tokens:,} | cache={report.total.cache_read_tokens:,} | out={report.total.output_tokens:,} | calls={report.total.planner_calls} | peak={format_tokens(report.total.peak_context_tokens)}",
+        "=" * 72,
+    ])
+    return "\n".join(lines)
+
+
+# ==============================================================================
 # HIGIENA WARSZTATU WSPÓŁPRACY (ZASADA CZYSTEGO STOŁU)
 # ==============================================================================
 
@@ -500,6 +1321,51 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Opcjonalny identyfikator/nazwa sesji (przestarzały).",
     )
+    parser.add_argument(
+        "--session-summary",
+        action="store_true",
+        dest="session_summary",
+        help="Zwraca sumaryczne zużycie tokenów bieżącej sesji (główna + powiązani subagenci + łącznie).",
+    )
+    parser.add_argument(
+        "--report",
+        action="store_true",
+        dest="report_mode",
+        help="Generuje dzienne zestawienie zużycia tokenów (sesje główne vs subagenci).",
+    )
+    parser.add_argument(
+        "--days",
+        type=int,
+        default=7,
+        help="Liczba dni wstecz dla --report (domyślnie: 7).",
+    )
+    parser.add_argument(
+        "--from",
+        type=str,
+        default=None,
+        dest="date_from",
+        help="Data początkowa YYYY-MM-DD dla --report.",
+    )
+    parser.add_argument(
+        "--to",
+        type=str,
+        default=None,
+        dest="date_to",
+        help="Data końcowa YYYY-MM-DD dla --report.",
+    )
+    parser.add_argument(
+        "--db-path",
+        type=str,
+        default=None,
+        dest="db_path",
+        help="Ścieżka do bazy lab_master.db (opcjonalnie).",
+    )
+    parser.add_argument(
+        "--save-db",
+        action="store_true",
+        dest="save_db",
+        help="Zapisuje podsumowanie sesji (--session-summary) do tabeli session_telemetry.",
+    )
     return parser
 
 
@@ -509,11 +1375,45 @@ def main(args: Optional[List[str]] = None) -> int:
     parsed_args = parser.parse_args(args)
 
     try:
+        if parsed_args.report_mode:
+            report = generate_telemetry_report(
+                brain_dir=parsed_args.brain_dir,
+                db_path=parsed_args.db_path,
+                days=parsed_args.days,
+                date_from=parsed_args.date_from,
+                date_to=parsed_args.date_to,
+            )
+            if parsed_args.json_mode:
+                print(json.dumps(report.to_dict(), indent=2, ensure_ascii=False))
+            else:
+                print(format_telemetry_report(report))
+            return 0
+
         # 1. Lokalizacja pliku transkryptu
         if parsed_args.transcript_path:
             transcript_file = Path(parsed_args.transcript_path).expanduser().resolve()
         else:
             transcript_file = find_latest_transcript(brain_dir=parsed_args.brain_dir)
+
+        if parsed_args.session_summary:
+            summary = summarize_session_telemetry(
+                transcript_file,
+                brain_dir=parsed_args.brain_dir,
+                limit=parsed_args.limit,
+            )
+            saved_row_id: Optional[int] = None
+            if parsed_args.save_db:
+                target_db = resolve_master_db_path(parsed_args.db_path)
+                if target_db is not None:
+                    saved_row_id = save_session_telemetry(target_db, summary)
+            if parsed_args.json_mode:
+                payload = summary.to_dict()
+                if saved_row_id is not None:
+                    payload["saved_row_id"] = saved_row_id
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+            else:
+                print(format_session_summary(summary))
+            return 0
 
         # 2. Parsowanie telemetrii
         metrics = parse_telemetry(transcript_file, limit=parsed_args.limit)

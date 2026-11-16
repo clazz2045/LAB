@@ -12,7 +12,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from lab_core import ConfigManager, find_vault_root
-from lab_core.distillate import validate_sat_distillate
+from lab_core.distillate import estimate_tokens, validate_sat_distillate
 from lab_core.quality import QualityContext, SubagentsPolicyInspector
 
 GOOD = "Fakty: zbadano 3 źródła.\nWnioski: synteza wskazuje A.\nRekomendacja: plik w Bazie Wiedzy."
@@ -520,6 +520,38 @@ class TestDispatchGuard(unittest.TestCase):
         ok, err = validate_dispatch_guard("researcher", "Klara", "research")
         self.assertTrue(ok)
         self.assertIsNone(err)
+
+
+class TestVariantBDistillate(unittest.TestCase):
+    def test_estimate_tokens_ignores_urls(self):
+        base = "Fakty: raport.\nWnioski: ok.\nRekomendacje: gotowe."
+        with_http = base + " https://example.com/very/long/url/path/to/resource?query=123"
+        with_file = base + " file:///tmp/sample-vault/docs/file.md"
+        self.assertEqual(estimate_tokens(base), estimate_tokens(with_http))
+        self.assertEqual(estimate_tokens(base), estimate_tokens(with_file))
+
+    def test_validate_sat_distillate_custom_max_tokens(self):
+        lines = ["- punkt: " + "a" * 150 for _ in range(16)]  # ~600+ tokenów
+        text = "Fakty:\n" + "\n".join(lines) + "\nWnioski:\n- ok\nRekomendacje:\n- ok"
+        tokens = estimate_tokens(text)
+        # Zaakceptuj przy wyższym limicie (np. 850)
+        ok_high, _ = validate_sat_distillate(text, max_tokens=tokens + 50)
+        self.assertTrue(ok_high)
+        # Odrzuć przy niższym limicie (np. tokens - 50)
+        ok_low, problems = validate_sat_distillate(text, max_tokens=tokens - 50)
+        self.assertFalse(ok_low)
+        self.assertTrue(any("limit" in p for p in problems))
+
+    def test_subagent_gate_check_only_task_type_thresholds(self):
+        from lab_core.subagents import run_check_only
+        lines = ["- punkt: " + "b" * 150 for _ in range(17)]  # ~660-700 tokenów
+        text = "Fakty:\n" + "\n".join(lines) + "\nWnioski:\n- ok\nRekomendacje:\n- ok"
+        tokens = estimate_tokens(text)
+        self.assertTrue(650 < tokens < 850)
+        # code ma limit 650 -> odrzucenie
+        self.assertEqual(run_check_only(text, task_type="code"), 1)
+        # research ma limit 850 -> akceptacja
+        self.assertEqual(run_check_only(text, task_type="research"), 0)
 
 
 class TestAgentContractAntiBloat(unittest.TestCase):

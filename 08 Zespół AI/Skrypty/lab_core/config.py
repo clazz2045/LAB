@@ -118,11 +118,24 @@ class AgentConfig:
 
 
 @dataclass(frozen=True)
+class DistillateConfig:
+    """Konfiguracja progów limitu tokenów destylatu SAT wg typu zadania."""
+    default: int = 650
+    thresholds: Dict[str, int] = field(default_factory=lambda: {
+        "code": 650,
+        "audit": 650,
+        "research": 850,
+        "synthesis": 850,
+    })
+
+
+@dataclass(frozen=True)
 class AITeamConfig:
     """Struktura Zespołu AI."""
     coordinator: AgentConfig
     governance_qa: AgentConfig
     specialists: List[AgentConfig] = field(default_factory=list)
+    distillate: DistillateConfig = field(default_factory=DistillateConfig)
 
 
 @dataclass(frozen=True)
@@ -391,10 +404,27 @@ class ConfigManager:
                 )
             )
 
+        dist_raw = ai_dict.get("distillate", {})
+        default_thresholds: Dict[str, int] = {
+            "code": 650,
+            "audit": 650,
+            "research": 850,
+            "synthesis": 850,
+        }
+        dist_default = 650
+        if isinstance(dist_raw, dict):
+            if "default" in dist_raw:
+                dist_default = int(dist_raw["default"])
+            for k, v in dist_raw.items():
+                if str(k).strip().lower() != "default":
+                    default_thresholds[str(k).strip().lower()] = int(v)
+        distillate_cfg = DistillateConfig(default=dist_default, thresholds=default_thresholds)
+
         self.ai_team = AITeamConfig(
             coordinator=coord,
             governance_qa=gov,
             specialists=specialists,
+            distillate=distillate_cfg,
         )
 
     def _parse_presentation(self) -> None:
@@ -581,6 +611,14 @@ class ConfigManager:
         Zwraca imię (assigned_name) agenta przypisanego do danego identyfikatora roli (role_key).
         """
         return self.get_agent_config(role_key).assigned_name
+
+    def get_distillate_limit(self, task_type: Optional[str] = None) -> int:
+        """Zwraca limit tokenów destylatu SAT dla wskazanego task_type (lub próg domyślny)."""
+        dist = self.ai_team.distillate
+        if not task_type:
+            return dist.default
+        key = str(task_type).strip().lower()
+        return dist.thresholds.get(key, dist.default)
 
     def get_agent_contract_file(self, role_key: str, absolute: bool = False) -> Path:
         """

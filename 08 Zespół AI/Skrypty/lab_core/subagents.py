@@ -39,6 +39,7 @@ if str(_scripts_dir) not in sys.path:
 from lab_core import ConfigManager, find_vault_root
 from lab_core.compliance import INVOKE_TOOL, _call_args, iter_steps, session_transcript_from_harness, transcript_files
 from lab_core.distillate import (
+    MAX_DISTILLATE_TOKENS,
     _strip_diacritics,
     estimate_tokens,
     validate_dispatch_guard,
@@ -235,7 +236,8 @@ def run_gate(
     except Exception:
         agent_name = agent
 
-    ok, problems = validate_sat_distillate(text)
+    max_tokens = config.get_distillate_limit(task_type)
+    ok, problems = validate_sat_distillate(text, max_tokens=max_tokens)
     problems_list = list(problems)
 
     guard_ok, guard_err = validate_dispatch_guard(agent, agent_name, task_type)
@@ -277,12 +279,23 @@ def run_gate(
     return 0 if ok else 1
 
 
-def run_check_only(text: str) -> int:
+def run_check_only(
+    text: str,
+    task_type: Optional[str] = None,
+    vault_root: Optional[Path] = None,
+) -> int:
     """Lokalna walidacja destylatu SAT (format i limit tokenów) bez transkryptu i bez zapisu do DB."""
-    ok, problems = validate_sat_distillate(text)
+    try:
+        root = Path(vault_root).resolve() if vault_root else find_vault_root()
+        config = ConfigManager(vault_root=root)
+        max_tokens = config.get_distillate_limit(task_type)
+    except Exception:
+        max_tokens = MAX_DISTILLATE_TOKENS
+
+    ok, problems = validate_sat_distillate(text, max_tokens=max_tokens)
     tokens = estimate_tokens(text)
     status = "OK" if ok else "REJECTED"
-    print(f"[subagent_gate] CHECK-ONLY: {status} (~{tokens} tok)")
+    print(f"[subagent_gate] CHECK-ONLY: {status} (~{tokens} tok, limit {max_tokens})")
     for problem in problems:
         print(f"  - {problem}")
     return 0 if ok else 1
@@ -343,7 +356,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if args.check_only:
         text = Path(args.file).read_text(encoding="utf-8") if args.file else sys.stdin.read()
-        return run_check_only(text)
+        return run_check_only(text, task_type=args.task_type)
 
     if args.print_sha:
         text = Path(args.file).read_text(encoding="utf-8") if args.file else sys.stdin.read()

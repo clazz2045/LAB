@@ -153,6 +153,14 @@ class SubagentsPolicyInspector(QualityInspector):
                 path=AGENTS_CONTRACT_FILE,
                 message=f"{AGENTS_CONTRACT_FILE} nie zawiera pełnej Reguły 8 (brak fraz: {'; '.join(missing)})",
             )
+        # Spójność modelu Read-Only: brak przestarzałego zakazu pojedynczego odczytu
+        if "nie ma prawa czytać plików" in text.lower():
+            ctx.add_finding(
+                level="warning",
+                category="subagents",
+                path=AGENTS_CONTRACT_FILE,
+                message=f"{AGENTS_CONTRACT_FILE} zawiera przestarzały zakaz odczytu pojedynczych plików niezgodny z modelem Read-Only.",
+            )
 
     def _check_agent_contract(self, ctx: QualityContext, role_path: Path, agent_name: str, room_id: str) -> bool:
         agent_file = role_path / "AGENT.md"

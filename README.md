@@ -1,6 +1,6 @@
-# LAB – Silnik Rdzenia i Governance Zespołu AI (Showcase / As-Is)
+# LAB – Silnik Rdzenia i Governance Zespołu AI dla środowiska Obsidian
 
-**Deterministyczny silnik, architektura agentowa i korpus ładu dla środowiska LAB (Partner Zarządzania Wiedzą).**
+**Deterministyczny silnik, architektura agentowa i korpus ładu działający w środowisku Obsidian (Partner Zarządzania Wiedzą).**
 
 Projekt rozwijany w standardzie **SAT (Szukaj · Analizuj · Twórz)** oraz **100% Python stdlib (Zero-Pip)**.
 
