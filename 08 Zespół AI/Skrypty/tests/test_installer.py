@@ -233,6 +233,33 @@ class TestLabInstaller(unittest.TestCase):
         self.assertTrue(res3.success)
         self.assertNotEqual(test_file.read_text(encoding="utf-8"), "MOJA_ZMIANA")
 
+    def test_role_markdown_personalizes_coordinator_and_owner(self):
+        agents = {
+            "coordinator": "Zenek",
+            "auditor": "Ada",
+            "researcher": "Klara",
+            "engineer": "Maks",
+            "designer": "Maja",
+            "knowledge": "Edyta",
+            "database_code": "Kinga",
+        }
+        res = install_lab_vault(
+            target_dir=self.target,
+            instance_name="ZEN_TEST",
+            user_name="Marek",
+            coordinator_name="Zenek",
+            agent_names=agents,
+            skip_preflight=True,
+            copy_engine=True,
+            run_smoke_check=False,
+        )
+        self.assertTrue(res.success)
+        coord_md = (self.target / "08 Zespół AI" / "Role" / "Koordynator - Zenek" / "AGENT.md").read_text(encoding="utf-8")
+        self.assertIn("name: Zenek", coord_md)
+        self.assertIn("# Zenek – Koordynator Zespołu AI", coord_md)
+        self.assertNotIn("name: Adam", coord_md)
+        self.assertIn("Marek", coord_md)
+
 
 class TestSetupLabCli(unittest.TestCase):
     """Test integracyjny wykonywalnego skryptu CLI setup_lab.py."""
@@ -328,7 +355,7 @@ class TestSetupLabCli(unittest.TestCase):
         self.assertNotIn('data-step="13"', html_out)
         self.assertNotIn("f_llm_model", html_out)
         self.assertIn("Środowisko AI – wybór programu", html_out)
-        self.assertIn("Koniec. Zakończyliśmy parametryzowanie. Teraz przechodzimy do instalacji.", html_out)
+        self.assertIn("12. Podsumowanie przed instalacją", html_out)
         self.assertIn("confirm_icloud_optimize_off", html_out)
         self.assertIn("<h1>LAB – Konfiguracja własna</h1>", html_out)
         self.assertNotIn("3.0", html_out)

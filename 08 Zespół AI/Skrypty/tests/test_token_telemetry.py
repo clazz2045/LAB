@@ -221,6 +221,26 @@ class TestParseTelemetry(unittest.TestCase):
         self.assertEqual(metrics.total_context_tokens, 212000)
         self.assertEqual(metrics.zone, ZONE_ATTENTION)
 
+    def test_parse_telemetry_claude_code_jsonl(self) -> None:
+        file_path = self.dir_path / "claude_session.jsonl"
+        entry = {
+            "type": "assistant",
+            "message": {
+                "usage": {
+                    "input_tokens": 1000,
+                    "cache_read_input_tokens": 20000,
+                    "cache_creation_input_tokens": 5000,
+                    "output_tokens": 300,
+                }
+            },
+        }
+        file_path.write_text(json.dumps(entry) + "\n", encoding="utf-8")
+        metrics = parse_telemetry(file_path)
+        self.assertEqual(metrics.input_tokens, 1000)
+        self.assertEqual(metrics.cache_read_tokens, 25000)
+        self.assertEqual(metrics.output_tokens, 300)
+        self.assertEqual(metrics.total_context_tokens, 26000)
+
 
 class TestFindLatestTranscript(unittest.TestCase):
     """Testy automatycznego wykrywania aktywnego pliku transkryptu."""

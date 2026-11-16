@@ -96,4 +96,14 @@ Zacznij od powitania i pierwszego pytania!
 3. **Zaplanuj pierwszy cel (`03 Projekty/`):**
    * Utwórz folder `PR-001 Mój Pierwszy Projekt` i rozwijaj inicjatywę bez chaosu.
 
+---
+
+### 6. Higiena Sesji i Telemetria Tokenów
+
+* **Dlaczego widzisz pasek `🧠 Xk / 250k`?** Pokazuje on na bieżąco, ile „pamięci roboczej” rozmowy już zużyłeś — im dłuższa rozmowa, tym łatwiej model AI przeoczy starsze ustalenia.
+* **Próg higieniczny (200–250k) i ostrzeżenia:** Przy ~75–85% limitu Koordynator ostrzeże Cię, że czas zamknąć bieżący wątek.
+* **Jak bezpiecznie zacząć nową sesję:** Wpisz **`/checkpoint`** (zapisze postęp na dysku), a potem otwórz świeżą rozmowę:
+  * **Antigravity:** kliknij **New Chat (`+`)**.
+  * **Claude Code:** wpisz **`/clear`** lub uruchom nową sesję w folderze skarbca.
+
 *Witaj w cichym, uporządkowanym warsztacie pracy! • LAB (MIT, Showcase / As-Is)*

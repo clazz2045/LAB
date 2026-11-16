@@ -214,6 +214,16 @@ python3 "08 Zespół AI/Skrypty/check_quality.py" --vault-root .
 
 ---
 
+## Higiena sesji i telemetria tokenów
+
+1. **Pasek telemetrii pod każdą odpowiedzią:** Koordynator raportuje aktualne zużycie okna kontekstowego (`🧠 Xk / 250k (Y%)`), abyś widział, ile pamięci roboczej pozostało w bieżącej rozmowie.
+2. **Próg higieniczny 200–250k tokenów:** Gdy zbliżysz się do **75–85%** (ok. 190–215k), system wyświetli ostrzeżenie — w długich wątkach rośnie ryzyko przeoczenia szczegółów (*Lost in the Middle*).
+3. **Bezpieczne zamknięcie i nowa sesja:** Uruchom **`/checkpoint`** (zapisuje stan Agendy i Dziennik Sesji), a następnie otwórz nową, świeżą rozmowę:
+   - **Antigravity:** kliknij *New Chat* (`+`) w panelu konwersacji.
+   - **Claude Code:** wpisz `/clear` (lub uruchom nową sesję `claude` w katalogu skarbca).
+
+---
+
 ## Licencja i Zakres Odpowiedzialności (`QG-3`)
 
 1. **Licencja MIT:** Całość kodu i szablonów publikowana jest na licencji MIT.

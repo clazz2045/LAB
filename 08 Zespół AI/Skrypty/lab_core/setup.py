@@ -426,23 +426,33 @@ showStep(1);
 </html>"""
 
 
-_STARTER_PROMPT_TEXT = (
-    "Cześć! Właśnie pobrałem paczkę startową LAB (mój Partner Zarządzania Wiedzą – PZW) "
-    "i chcę postawić swoje prywatne środowisko pracy w Obsidianie.\n\n"
-    "Jesteś moim cierpliwym, przyjaznym Wirtualnym Asystentem Wdrożenia LAB.\n\n"
-    "Twoje zasady:\n"
-    "1. Prowadź mnie za rękę krok po kroku. Zapytaj mnie najpierw, na jakim systemie pracuję "
-    "(macOS czy Windows) i czy mam już zainstalowanego Obsidiana oraz Pythona 3.11+.\n"
-    "2. Gdy potwierdzę uruchomienie instalatora dwuklikiem myszy "
-    "(LAB-Installer.command / LAB-Installer.bat), wyjaśnij mi prosto, jak otworzyć nowo utworzony "
-    "folder w programie Obsidian (oraz uspokój mnie, że Obsidian celowo ukrywa pliki techniczne poza AGENTS.md).\n"
-    "3. Wytłumacz mi w 3 przejrzystych punktach, jak korzystać z 8 Pokoi LAB "
-    "(przede wszystkim: czym różni się '01 Skrzynka' od '02 Warsztat' i '03 Projekty').\n"
-    "4. Używaj prostego, naturalnego języka. Unikaj żargonu programistycznego. "
-    "Po każdym kroku zadawaj mi jedno pytanie sprawdzające, czy wszystko poszło zgodnie z planem, "
-    "zanim przejdziesz dalej.\n\n"
-    "Zacznij od powitania i pierwszego pytania!"
-)
+def _build_starter_prompt(coordinator_name: str = "Adam", owner_name: str = "") -> str:
+    """Buduje spersonalizowany prompt inicjujący dla Koordynatora nowej instancji."""
+    coord = (coordinator_name or "Adam").strip()
+    owner_hint = f" (właściciel: {owner_name.strip()})" if owner_name and owner_name.strip() else ""
+    return (
+        f"Cześć {coord}! Właśnie uruchomiłem nową instancję LAB (mój Partner Zarządzania Wiedzą – PZW){owner_hint} "
+        "i chcę rozpocząć pracę w Obsidianie.\n\n"
+        f"Jesteś {coord} – moim Koordynatorem Zespołu AI oraz cierpliwym Wirtualnym Asystentem Wdrożenia LAB.\n\n"
+        "Twoje zasady:\n"
+        "1. Prowadź mnie za rękę krok po kroku. Zapytaj mnie najpierw, na jakim systemie pracuję "
+        "(macOS czy Windows) i czy mam już zainstalowanego Obsidiana oraz Pythona 3.11+.\n"
+        "2. Gdy potwierdzę otwarcie nowo utworzonego folderu w programie Obsidian, uspokój mnie, że Obsidian celowo "
+        "ukrywa pliki techniczne poza AGENTS.md.\n"
+        "3. Wytłumacz mi w 3 przejrzystych punktach, jak korzystać z 8 Pokoi LAB "
+        "(przede wszystkim: czym różni się '01 Skrzynka' od '02 Warsztat' i '03 Projekty').\n"
+        "4. Po sprawdzeniu gotowości środowiska wyjaśnij mi prosto zasady higieny sesji i telemetrii:\n"
+        "   - dlaczego każda odpowiedź kończy się paskiem zużycia tokenów,\n"
+        "   - co oznacza próg higieniczny 200–250k tokenów i ostrzeżenia przed limitem,\n"
+        "   - jak bezpiecznie zamknąć sesję komendą /checkpoint i otworzyć nową sesję w Antigravity / Claude Code.\n"
+        "5. Używaj prostego, naturalnego języka. Unikaj żargonu programistycznego. "
+        "Po każdym kroku zadawaj mi jedno pytanie sprawdzające, czy wszystko poszło zgodnie z planem, "
+        "zanim przejdziesz dalej.\n\n"
+        "Zacznij od powitania (przedstaw się jako mój Koordynator) i pierwszego pytania!"
+    )
+
+
+_STARTER_PROMPT_TEXT = _build_starter_prompt()
 
 
 def _load_starter_card_html() -> str:
@@ -525,7 +535,13 @@ def _render_result_html(result: InstallResult, options: Optional[InstallOptions]
       <li>Imiona agentów AI: <strong>{html.escape(agents_summary)}</strong></li>
     </ul>
   </div>"""
-    starter_prompt_js = html.escape(json.dumps(_STARTER_PROMPT_TEXT), quote=True)
+    coord_name = (
+        (options.agent_names or {}).get("coordinator") or options.coordinator_name
+        if options
+        else DEFAULT_AGENT_NAMES["coordinator"]
+    )
+    starter_prompt_text = _build_starter_prompt(coord_name, options.user_name if options else "")
+    starter_prompt_js = html.escape(json.dumps(starter_prompt_text), quote=True)
     starter_card_html = _load_starter_card_html()
     starter_card_section = (
         f"""
@@ -602,33 +618,60 @@ def _render_result_html(result: InstallResult, options: Optional[InstallOptions]
   <div class="box">
     <strong>🤖 Łatwy start z AI — Prompt Inicjujący (z Karty Startowej):</strong>
     <p style="margin:6px 0 8px 0;">W pliku <code>Karta_Startowa_LAB.html</code> / <code>.md</code> znajduje się gotowy prompt inicjujący, który ułatwi rozpoczęcie pracy z systemem LAB. Skopiuj go poniżej i wklej do swojego czatu AI:</p>
-    <pre style="white-space:pre-wrap;background:#020617;border:1px solid #334155;border-radius:8px;padding:12px;font-size:12px;line-height:1.45;color:#cbd5e1;margin:0;">{html.escape(_STARTER_PROMPT_TEXT)}</pre>
+    <pre id="starterPromptPre" style="white-space:pre-wrap;background:#020617;border:1px solid #334155;border-radius:8px;padding:12px;font-size:12px;line-height:1.45;color:#cbd5e1;margin:0;">{html.escape(starter_prompt_text)}</pre>
     <button class="btn" type="button" id="copyPromptBtn" onclick="copyStarterPrompt()">Kopiuj prompt inicjujący</button>
+    <div id="copyErrorMsg" class="warn" style="display:none;margin-top:8px;"></div>
   </div>
   {starter_card_section}
 </div>
 <script>
-function copyVaultPath() {{
-  var path = {target_js};
-  var btn = document.getElementById("copyPathBtn");
+function _fallbackCopyText(text) {{
+  var ta = document.createElement("textarea");
+  ta.value = text;
+  ta.setAttribute("readonly", "");
+  ta.style.position = "fixed";
+  ta.style.left = "-9999px";
+  ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  var ok = false;
+  try {{
+    ok = document.execCommand("copy");
+  }} catch (e) {{
+    ok = false;
+  }}
+  document.body.removeChild(ta);
+  return ok;
+}}
+function _copyTextWithFallback(text, btn, okLabel, errLabel) {{
+  var errBox = document.getElementById("copyErrorMsg");
+  function _onFail() {{
+    btn.textContent = errLabel;
+    if (errBox) {{
+      errBox.style.display = "block";
+      errBox.textContent = "Przeglądarka zablokowała automatyczny dostęp do schowka. Zaznacz tekst powyżej i naciśnij Cmd+C (Mac) lub Ctrl+C (Windows).";
+    }}
+  }}
+  function _onOk() {{
+    btn.textContent = okLabel;
+    if (errBox) {{ errBox.style.display = "none"; }}
+  }}
   if (navigator.clipboard && navigator.clipboard.writeText) {{
-    navigator.clipboard.writeText(path).then(function() {{
-      btn.textContent = "Skopiowano ścieżkę!";
+    navigator.clipboard.writeText(text).then(_onOk).catch(function() {{
+      if (_fallbackCopyText(text)) {{ _onOk(); }} else {{ _onFail(); }}
     }});
+  }} else if (_fallbackCopyText(text)) {{
+    _onOk();
   }} else {{
-    btn.textContent = "Zaznacz i skopiuj ścieżkę powyżej";
+    _onFail();
   }}
 }}
+function copyVaultPath() {{
+  _copyTextWithFallback({target_js}, document.getElementById("copyPathBtn"), "Skopiowano ścieżkę!", "Nie udało się skopiować — skopiuj ręcznie");
+}}
 function copyStarterPrompt() {{
-  var promptText = {starter_prompt_js};
-  var btn = document.getElementById("copyPromptBtn");
-  if (navigator.clipboard && navigator.clipboard.writeText) {{
-    navigator.clipboard.writeText(promptText).then(function() {{
-      btn.textContent = "Skopiowano prompt!";
-    }});
-  }} else {{
-    btn.textContent = "Zaznacz i skopiuj prompt powyżej";
-  }}
+  _copyTextWithFallback({starter_prompt_js}, document.getElementById("copyPromptBtn"), "Skopiowano prompt!", "Błąd schowka — skopiuj ręcznie powyżej");
 }}
 </script>
 </body>

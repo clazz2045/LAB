@@ -71,11 +71,13 @@ class TestSetupWebWizard(unittest.TestCase):
 
     def test_result_html_includes_starter_prompt_and_card(self) -> None:
         agents = dict(DEFAULT_AGENT_NAMES)
+        agents["coordinator"] = "Zenek"
         agents["engineer"] = "Borys"
         opts = InstallOptions(
             target_dir=Path("/tmp/LAB-Test"),
             instance_name="LAB-Custom",
             user_name="Jan",
+            coordinator_name="Zenek",
             theme_mode="dark",
             theme_preset_dark="nord",
             theme_preset_light="dawn",
@@ -92,6 +94,12 @@ class TestSetupWebWizard(unittest.TestCase):
         self.assertIn("Kopiuj prompt inicjujący", html_out)
         self.assertIn("Pełna Karta Startowa LAB", html_out)
         self.assertIn("Podsumowanie zastosowanej konfiguracji:", html_out)
+        self.assertIn("Cześć Zenek!", html_out)
+        self.assertIn("200–250k tokenów", html_out)
+        self.assertIn("/checkpoint", html_out)
+        self.assertIn("_fallbackCopyText", html_out)
+        self.assertIn('document.execCommand("copy")', html_out)
+        self.assertIn('id="copyErrorMsg"', html_out)
         self.assertIn("Jan", html_out)
         self.assertIn("LAB-Custom", html_out)
         self.assertIn("ciemny: nord", html_out)

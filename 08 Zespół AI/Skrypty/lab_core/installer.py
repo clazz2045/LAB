@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -1070,10 +1071,38 @@ created: {time.strftime('%Y-%m-%d')}
                         if not dst_f.exists() or self.options.force:
                             if dst_f.exists():
                                 _backup_if_exists(dst_f)
-                            shutil.copy2(src_f, dst_f)
+                            if category == "Role" and src_f.suffix.lower() == ".md":
+                                raw_md = src_f.read_text(encoding="utf-8")
+                                personalized = _personalize_role_markdown(
+                                    raw_md,
+                                    self.options.agent_names or DEFAULT_AGENT_NAMES,
+                                    self.options.user_name,
+                                )
+                                dst_f.write_text(personalized, encoding="utf-8")
+                            else:
+                                shutil.copy2(src_f, dst_f)
                             if sys.platform == "darwin" and "integrations/raycast" in dst_f.as_posix() and dst_f.suffix == ".sh":
                                 os.chmod(dst_f, 0o755)
                             self.created.append(str(dst_f.relative_to(config.vault_root)))
+
+
+def _personalize_role_markdown(
+    text: str,
+    agent_names: Dict[str, str],
+    user_name: str,
+) -> str:
+    """Podmienia domyślne imiona agentów oraz właściciela w kopiowanych kontraktach Role/*/AGENT.md."""
+    out = text
+    for role_key, default_name in DEFAULT_AGENT_NAMES.items():
+        custom_name = (agent_names.get(role_key) or default_name).strip()
+        if not custom_name or custom_name == default_name:
+            continue
+        out = re.sub(rf"\b{re.escape(default_name)}\b", custom_name, out)
+    clean_user = (user_name or "").strip()
+    if clean_user:
+        for old_owner in ("Zbigniewa", "Zbigniewem", "Zbigniewowi", "Zbigniew"):  # QG2-IGNORE
+            out = re.sub(rf"\b{old_owner}\b", clean_user, out)
+    return out
 
 
 def _replace_str_in_json(obj: Any, old: str, new: str) -> Any:
