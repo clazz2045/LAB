@@ -1,0 +1,62 @@
+/* ==========================================================================
+   Motyw: book-classic — Klasyczna książka szeryfowa (Charter / Palatino / Georgia)
+   Ładować po _base_book.css.
+   ========================================================================== */
+
+:root {
+  --font-body: "Charter", "Iowan Old Style", "Palatino", "Georgia", serif;
+  --font-heading: "Charter", "Iowan Old Style", "Palatino", "Georgia", serif;
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+
+  --color-ink: #1a1a1a;
+  --color-ink-soft: #3f3f46;
+  --color-muted: #71717a;
+  --color-accent: #7c2d12;
+  --color-rule: #d4d4d8;
+  --color-surface: #fafaf9;
+  --color-code-bg: #f4f4f5;
+
+  --body-size: 10.5pt;
+  --body-leading: 1.62;
+  --body-align: justify;
+  --body-hyphens: auto;
+  --h1-size: 21pt;
+  --h2-size: 14pt;
+  --h3-size: 11.5pt;
+}
+
+/* Klasyczna, wyśrodkowana kompozycja strony tytułowej */
+.cover-page {
+  text-align: center;
+}
+
+.cover-rule {
+  margin: 18pt auto;
+}
+
+/* Subtelny ornament § zamiast zwykłej linii */
+hr {
+  border: none;
+  text-align: center;
+  height: 12pt;
+  margin: 18pt 0;
+}
+
+hr::after {
+  content: "§";
+  color: var(--color-muted);
+  font-family: var(--font-body);
+  font-size: 11pt;
+}
+
+.book-body h1 {
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  padding-bottom: 5pt;
+  border-bottom: 1pt solid var(--color-rule);
+}
+
+.book-body h2 {
+  font-weight: 700;
+  color: var(--color-ink);
+}

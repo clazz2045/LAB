@@ -1,0 +1,24 @@
+# LAB - Git Ignore Standard
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.DS_Store
+.pytest_cache/
+.coverage
+htmlcov/
+*.tmp
+*.log
+*.bak
+*.db
+*.db-wal
+*.db-shm
+*-wal
+*-shm
+lab.config.toml
+.obsidian/workspace*.json
+.obsidian/plugins/
+.obsidian/wispr_sync_state.json
+.venv/
+env/
+venv/

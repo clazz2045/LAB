@@ -1,0 +1,208 @@
+# lab.config.example.toml - Wzorcowy plik konfiguracyjny LAB 3.0 (Framework PZW)
+# Standard: TOML (v1.0.0), moduł wbudowany: tomllib (Python 3.11+)
+# Skopiuj ten plik jako `lab.config.toml` lub wygeneruj automatycznie przez `lab-init.py`.
+
+[system]
+id = "lab-pzw-core"
+instance_name = "LAB"
+version = "3.0.0"
+language = "pl"
+timezone = "Europe/Warsaw"
+
+[user]
+name = "Owner"
+formal_title = "Właściciel Systemu"
+role = "system-owner"
+call_sign = "Owner"
+
+[storage]
+root_var = "VAULT_ROOT"
+relative_mode = true
+root_indicator = "lab.config.toml"
+
+[vcs]
+enabled = false
+provider = "github"
+remote_url = "https://github.com/clazz2045/LAB.git"
+branch = "main"
+icloud_guard = true
+
+# ==============================================================================
+# SŁOWNIK TOPOGRAFII PRZESTRZENNEJ (8 POKOI LAB 3.0)
+# ==============================================================================
+
+[rooms.r01_inbox]
+id = "r01_inbox"
+code = "01"
+role = "ingestion"
+policy = "drain-to-zero"
+name = "Skrzynka"
+path = "01 Skrzynka"
+color = "#bf616a"
+
+[rooms.r02_workshop]
+id = "r02_workshop"
+code = "02"
+role = "daily-workbench"
+policy = "daily-journal-wip"
+name = "Warsztat"
+path = "02 Warsztat"
+color = "#d19a66"
+entry_file = "Dashboard LAB.md"
+
+[rooms.r03_projects]
+id = "r03_projects"
+code = "03"
+role = "active-projects"
+policy = "bounded-initiatives"
+name = "Projekty"
+path = "03 Projekty"
+color = "#61afef"
+entry_file = "_Spis Projektów.md"
+
+[rooms.r04_operations]
+id = "r04_operations"
+code = "04"
+role = "lifecycle-routines"
+policy = "continuous-responsibilities"
+name = "Operacje"
+path = "04 Operacje"
+color = "#2982db"
+entry_file = "_Spis Operacji.md"
+
+[rooms.r05_knowledge]
+id = "r05_knowledge"
+code = "05"
+role = "atomic-synthesis-and-research"
+policy = "evergreen-and-research"
+name = "Baza Wiedzy"
+path = "05 Baza Wiedzy"
+color = "#98c379"
+
+[rooms.r06_assets]
+id = "r06_assets"
+code = "06"
+role = "reference-and-assets"
+policy = "reference-archive"
+name = "Zasoby"
+path = "06 Zasoby"
+color = "#b48ead"
+
+[rooms.r07_databases]
+id = "r07_databases"
+code = "07"
+role = "sqlite-relational"
+policy = "read-heavy-wal"
+name = "Bazy Danych"
+path = "07 Bazy Danych"
+color = "#b57a86"
+
+[rooms.r08_aiteam]
+id = "r08_aiteam"
+code = "08"
+role = "governance-and-engine"
+policy = "ai-orchestration"
+name = "Zespół AI"
+path = "08 Zespół AI"
+color = "#c678dd"
+
+# ==============================================================================
+# KONFIGURACJA SILNIKA LLM I TOŻSAMOŚCI ZESPOŁU AI
+# ==============================================================================
+
+[ai_team.llm]
+provider = "antigravity"
+model = "claude-sonnet-4-5"
+available_providers = ["antigravity", "claude"]
+
+[ai_team.llm.providers.antigravity]
+engine = "antigravity-ide"
+default_model = "gemini-2.5-pro"
+fast_model = "gemini-2.5-flash"
+
+[ai_team.llm.providers.claude]
+engine = "anthropic-claude"
+default_model = "claude-sonnet-4-5"
+audit_model = "claude-opus-4-1"
+
+[ai_team.coordinator]
+role_key = "coordinator"
+role = "Koordynator Zespołu AI"
+assigned_name = "Adam"
+contract_file = "08 Zespół AI/Role/Koordynator - Adam/AGENT.md"
+default_model = "fast"
+
+[ai_team.governance_qa]
+role_key = "auditor"
+role = "Niezależny Główny Audytor i Jakość"
+assigned_name = "Ada"
+contract_file = "08 Zespół AI/Role/Audytor - Ada/AGENT.md"
+default_model = "flagship-audit"
+
+[[ai_team.specialists]]
+role_key = "researcher"
+role = "Badacz Źródeł i Faktów"
+assigned_name = "Klara"
+name = "Klara"
+contract_file = "08 Zespół AI/Role/Research - Klara/AGENT.md"
+slug = "klara"
+
+[[ai_team.specialists]]
+role_key = "engineer"
+role = "Szef Sztabu Wykonawczego i Główny Inżynier"
+assigned_name = "Maks"
+name = "Maks"
+contract_file = "08 Zespół AI/Role/Inżynier - Maks/AGENT.md"
+slug = "maks"
+
+[[ai_team.specialists]]
+role_key = "designer"
+role = "Architekt Systemu Designu i Ergonomii Wizualnej"
+assigned_name = "Maja"
+name = "Maja"
+contract_file = "08 Zespół AI/Role/Design - Maja/AGENT.md"
+slug = "maja"
+
+[[ai_team.specialists]]
+role_key = "knowledge"
+role = "Specjalista Syntezy i Organizacji Wiedzy"
+assigned_name = "Edyta"
+name = "Edyta"
+contract_file = "08 Zespół AI/Role/Wiedza - Edyta/AGENT.md"
+slug = "edyta"
+
+[[ai_team.specialists]]
+role_key = "database_code"
+role = "Główny Architekt Struktury i Baz Danych"
+assigned_name = "Kinga"
+name = "Kinga"
+contract_file = "08 Zespół AI/Role/Bazy Danych - Kinga/AGENT.md"
+slug = "kinga"
+
+# ==============================================================================
+# SŁOWNIK PREZENTACJI I DESIGN SYSTEMU
+# ==============================================================================
+
+[presentation]
+theme_preset = "dawn"
+theme_preset_light = "dawn"
+theme_preset_dark = "tokyonight"
+theme_mode = "system"
+font_sans = "-apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif"
+font_mono = "ui-monospace, 'SF Mono', Menlo, monospace"
+
+# ==============================================================================
+# SŁOWNIK POLITYK BEZPIECZEŃSTWA I INTEGRALNOŚCI (POLICIES)
+# ==============================================================================
+
+[policies.human_thoughts]
+protect_unorganized_thoughts = true
+forbid_auto_sprint_injection = true
+require_explicit_confirmation = true
+description = "Bezwzględny zakaz samowolnego dopisywania nieuporządkowanych myśli i idei użytkownika do Warsztatu/Sprintu."
+
+[policies.workshop]
+allowed_task_types = ["PR", "OP"]
+forbidden_task_types = ["RS"]
+forbidden_sections = ["Pokoje Robocze", "Zrzut ze Skrzynki", "Filar IV: Badania i Synteza Wiedzy"]
+description = "Warsztat jest stołem roboczym wyłącznie dla projektów (PR) i operacji (OP)."

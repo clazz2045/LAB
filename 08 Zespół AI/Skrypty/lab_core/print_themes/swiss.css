@@ -1,0 +1,66 @@
+/* ==========================================================================
+   Motyw: swiss — Nowoczesny styl szwajcarski (Helvetica Neue / SF Pro)
+   Idealny do poradników, dokumentacji biznesowej i raportów wykonawczych.
+   Ładować po _base_book.css.
+   ========================================================================== */
+
+:root {
+  --font-body: "Helvetica Neue", -apple-system, BlinkMacSystemFont, "SF Pro Text", Arial, sans-serif;
+  --font-heading: "Helvetica Neue", -apple-system, BlinkMacSystemFont, "SF Pro Display", Arial, sans-serif;
+  --font-ui: "Helvetica Neue", -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+
+  --color-ink: #09090b;
+  --color-ink-soft: #27272a;
+  --color-muted: #52525b;
+  --color-accent: #dc2626;
+  --color-rule: #d4d4d8;
+  --color-surface: #f4f4f5;
+  --color-code-bg: #f4f4f5;
+
+  --body-size: 9.8pt;
+  --body-leading: 1.54;
+  --body-align: left;
+  --body-hyphens: none;
+  --h1-size: 22pt;
+  --h2-size: 13.5pt;
+  --h3-size: 10.5pt;
+}
+
+.cover-title {
+  font-size: 28pt;
+  font-weight: 900;
+  letter-spacing: -0.03em;
+}
+
+.cover-rule {
+  width: 100%;
+  height: 3pt;
+  background: var(--color-ink);
+}
+
+.book-body h1 {
+  font-weight: 900;
+  letter-spacing: -0.025em;
+  border-top: 2.5pt solid var(--color-ink);
+  padding-top: 8pt;
+  margin-top: 6pt;
+}
+
+.book-body h2 {
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  border-bottom: 1pt solid var(--color-ink);
+  padding-bottom: 3pt;
+}
+
+.callout {
+  border: none;
+  border-left: 3.5pt solid var(--color-accent);
+  border-radius: 0;
+}
+
+pre {
+  border-radius: 0;
+  border: none;
+  border-left: 3pt solid var(--color-ink);
+}

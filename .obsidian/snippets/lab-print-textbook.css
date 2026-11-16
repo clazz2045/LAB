@@ -1,0 +1,263 @@
+/* ==========================================================================
+   LAB Print & Reading Snippet: TEXTBOOK (Styl Podręcznikowy / Książkowy)
+   Aktywacja wyłącznie przez YAML frontmatter:
+     cssclasses:
+       - textbook
+   Domyślny styl notatek (lab-design-tokens.css) pozostaje w 100% nietknięty.
+   ========================================================================== */
+
+/* 1. ZMIENNE I PODSTAWOWA TYPOGRAFIA (Reading View w Obsidianie) */
+.markdown-preview-view.textbook,
+.markdown-rendered.textbook {
+  --textbook-font-serif: "Charter", "Iowan Old Style", "Palatino", "Georgia", "Times New Roman", serif;
+  --textbook-font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+  --textbook-font-mono: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
+  --textbook-ink: #1a202c;
+  --textbook-ink-muted: #4a5568;
+  --textbook-rule: #cbd5e1;
+  --textbook-accent: #1e3a8a;
+  --textbook-surface: #f8fafc;
+
+  font-family: var(--textbook-font-serif);
+  font-size: 1.05rem;
+  line-height: 1.68;
+  color: var(--textbook-ink);
+}
+
+/* Wąska, ergonomiczna kolumna książkowa w trybie podglądu ekranowego */
+.markdown-preview-view.textbook .markdown-preview-sizer {
+  max-width: 68ch !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+}
+
+/* 2. AKAPITY, JUSTOWANIE I DZIELENIE WYRAZÓW */
+.markdown-rendered.textbook p {
+  font-family: var(--textbook-font-serif);
+  text-align: justify;
+  hyphens: auto;
+  -webkit-hyphens: auto;
+  margin-top: 0;
+  margin-bottom: 0.85em;
+  orphans: 3;
+  widows: 3;
+}
+
+/* 3. NAGŁÓWKI PODRĘCZNIKOWE */
+.markdown-rendered.textbook .inline-title,
+.markdown-rendered.textbook h1 {
+  font-family: var(--textbook-font-sans);
+  font-size: 1.95em;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+  color: #0f172a;
+  margin-top: 1.4em;
+  margin-bottom: 0.6em;
+  padding-bottom: 0.3em;
+  border-bottom: 2px solid #0f172a;
+}
+
+.markdown-rendered.textbook h2 {
+  font-family: var(--textbook-font-sans);
+  font-size: 1.38em;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+  color: #0f172a;
+  margin-top: 1.8em;
+  margin-bottom: 0.55em;
+  padding-bottom: 0.2em;
+  border-bottom: 1px solid var(--textbook-rule);
+}
+
+.markdown-rendered.textbook h3 {
+  font-family: var(--textbook-font-sans);
+  font-size: 1.12em;
+  font-weight: 700;
+  color: #1e293b;
+  margin-top: 1.4em;
+  margin-bottom: 0.4em;
+}
+
+.markdown-rendered.textbook h4 {
+  font-family: var(--textbook-font-sans);
+  font-size: 1em;
+  font-weight: 600;
+  font-style: italic;
+  color: var(--textbook-ink-muted);
+  margin-top: 1.1em;
+  margin-bottom: 0.35em;
+}
+
+/* 4. LISTY, CYTATY I RAMKI DEFINICJI (CALLOUTY) */
+.markdown-rendered.textbook ul,
+.markdown-rendered.textbook ol {
+  font-family: var(--textbook-font-serif);
+  padding-left: 1.6em;
+  margin: 0.6em 0 1em 0;
+}
+
+.markdown-rendered.textbook li {
+  margin-bottom: 0.35em;
+  line-height: 1.6;
+  text-align: justify;
+  hyphens: auto;
+  -webkit-hyphens: auto;
+}
+
+.markdown-rendered.textbook blockquote {
+  font-family: var(--textbook-font-serif);
+  font-style: italic;
+  color: #334155;
+  background: transparent;
+  border: none;
+  border-left: 3px solid var(--textbook-accent);
+  padding: 0.2em 0 0.2em 1.2em;
+  margin: 1.1em 0;
+}
+
+.markdown-rendered.textbook .callout {
+  font-family: var(--textbook-font-sans);
+  font-size: 0.92em;
+  line-height: 1.55;
+  background-color: var(--textbook-surface);
+  border: 1px solid var(--textbook-rule);
+  border-left: 4px solid var(--textbook-accent);
+  border-radius: 3px;
+  padding: 0.8em 1em;
+  margin: 1.1em 0;
+}
+
+/* 5. TABELE AKADEMICKIE (STYL BOOKTABS) */
+.markdown-rendered.textbook table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--textbook-font-sans);
+  font-size: 0.88em;
+  margin: 1.3em 0;
+  border-top: 2px solid #0f172a;
+  border-bottom: 2px solid #0f172a;
+}
+
+.markdown-rendered.textbook th {
+  font-weight: 700;
+  text-align: left;
+  color: #0f172a;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid #475569;
+  padding: 0.55em 0.75em;
+}
+
+.markdown-rendered.textbook td {
+  border: none;
+  border-bottom: 1px solid #e2e8f0;
+  padding: 0.5em 0.75em;
+  vertical-align: top;
+}
+
+.markdown-rendered.textbook tr:last-child td {
+  border-bottom: none;
+}
+
+/* 6. KOD I SEPARATOR */
+.markdown-rendered.textbook code {
+  font-family: var(--textbook-font-mono);
+  font-size: 0.86em;
+  background: #f1f5f9;
+  padding: 0.12em 0.35em;
+  border-radius: 3px;
+  border: 1px solid #e2e8f0;
+}
+
+.markdown-rendered.textbook pre {
+  font-family: var(--textbook-font-mono);
+  font-size: 0.85em;
+  line-height: 1.48;
+  background: #f8fafc;
+  color: #0f172a;
+  border: 1px solid var(--textbook-rule);
+  border-left: 3px solid #64748b;
+  border-radius: 3px;
+  padding: 0.85em 1em;
+}
+
+.markdown-rendered.textbook hr {
+  border: none;
+  text-align: center;
+  margin: 1.8em 0;
+  height: 1em;
+}
+
+.markdown-rendered.textbook hr::after {
+  content: "§";
+  color: #94a3b8;
+  font-family: var(--textbook-font-serif);
+  font-size: 1.1em;
+}
+
+/* ==========================================================================
+   7. REGUŁY DRUKU I EKSPORTU PDF W OBSIDIANIE (@media print)
+   ========================================================================== */
+@media print {
+  .print .markdown-rendered.textbook,
+  .markdown-preview-view.textbook,
+  .markdown-rendered.textbook {
+    background: #ffffff !important;
+    color: #0f172a !important;
+    font-family: "Charter", "Iowan Old Style", "Palatino", "Georgia", serif !important;
+    font-size: 10.5pt !important;
+    line-height: 1.58 !important;
+    max-width: none !important;
+  }
+
+  .print .markdown-rendered.textbook p,
+  .markdown-rendered.textbook p {
+    color: #111827 !important;
+    text-align: justify !important;
+    hyphens: auto !important;
+    -webkit-hyphens: auto !important;
+    orphans: 3 !important;
+    widows: 3 !important;
+  }
+
+  /* Nowy główny rozdział (kolejne H1) zaczyna się od nowej strony */
+  .print .markdown-rendered.textbook h1:not(:first-of-type),
+  .markdown-rendered.textbook h1:not(:first-of-type) {
+    break-before: page !important;
+    page-break-before: always !important;
+  }
+
+  .print .markdown-rendered.textbook h1,
+  .print .markdown-rendered.textbook h2,
+  .print .markdown-rendered.textbook h3,
+  .markdown-rendered.textbook h1,
+  .markdown-rendered.textbook h2,
+  .markdown-rendered.textbook h3 {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif !important;
+    color: #0f172a !important;
+    break-after: avoid !important;
+    page-break-after: avoid !important;
+  }
+
+  .print .markdown-rendered.textbook table,
+  .print .markdown-rendered.textbook blockquote,
+  .print .markdown-rendered.textbook .callout,
+  .print .markdown-rendered.textbook pre,
+  .markdown-rendered.textbook table,
+  .markdown-rendered.textbook blockquote,
+  .markdown-rendered.textbook .callout,
+  .markdown-rendered.textbook pre {
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+  }
+
+  .print .markdown-rendered.textbook pre,
+  .markdown-rendered.textbook pre {
+    background-color: #f8fafc !important;
+    color: #0f172a !important;
+    border: 1px solid #cbd5e1 !important;
+    border-left: 3px solid #64748b !important;
+  }
+}

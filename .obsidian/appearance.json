@@ -1,0 +1,9 @@
+{
+  "theme": "system",
+  "enabledCssSnippets": [
+    "lab-design-tokens"
+  ],
+  "baseFontSize": 16,
+  "accentColor": "#0284c7",
+  "showRibbon": true
+}

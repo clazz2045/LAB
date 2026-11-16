@@ -1,0 +1,64 @@
+/* ==========================================================================
+   Motyw: manuscript — Styl roboczy / korektorski (maszynopisowy)
+   Przejrzysty układ do redakcji, korekty i nanoszenia uwag na wydruku.
+   Ładować po _base_book.css.
+   ========================================================================== */
+
+:root {
+  --font-body: "Courier Prime", "Courier New", ui-monospace, Menlo, monospace;
+  --font-heading: "Courier Prime", "Courier New", ui-monospace, Menlo, monospace;
+  --font-ui: "Courier Prime", "Courier New", ui-monospace, Menlo, monospace;
+
+  --color-ink: #18181b;
+  --color-ink-soft: #3f3f46;
+  --color-muted: #71717a;
+  --color-accent: #18181b;
+  --color-rule: #a1a1aa;
+  --color-surface: #fafafa;
+  --color-code-bg: #f4f4f5;
+
+  --body-size: 10pt;
+  --body-leading: 1.78;
+  --body-align: left;
+  --body-hyphens: none;
+  --h1-size: 15pt;
+  --h2-size: 12.5pt;
+  --h3-size: 10.5pt;
+}
+
+.cover-page {
+  text-align: left;
+}
+
+.cover-title {
+  font-size: 18pt;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.book-body h1 {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom: 1pt dashed var(--color-rule);
+  padding-bottom: 4pt;
+}
+
+.book-body h2 {
+  text-decoration: underline;
+  text-underline-offset: 3pt;
+}
+
+p {
+  text-indent: 18pt;
+  margin-bottom: 6pt;
+}
+
+h1 + p, h2 + p, h3 + p, blockquote p, li p {
+  text-indent: 0;
+}
+
+.callout {
+  border: 1pt dashed var(--color-rule);
+  border-left: 3pt solid var(--color-ink);
+  background: #ffffff;
+}

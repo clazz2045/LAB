@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <title>Karta Startowa LAB</title>
+  <style>
+    @page {
+      size: A4;
+      margin: 18mm 16mm 18mm 16mm;
+    }
+    :root {
+      --bg: #ffffff;
+      --text: #1e232a;
+      --muted: #5c6370;
+      --accent: #2982db;
+      --accent-subtle: #edf5fc;
+      --border: #e1e4e8;
+      --code-bg: #f6f8fa;
+      --card-bg: #fbfcfd;
+      --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: var(--font-sans);
+      color: var(--text);
+      background: var(--bg);
+      line-height: 1.5;
+      font-size: 13.5px;
+      margin: 0;
+      padding: 0;
+    }
+    .header {
+      border-bottom: 2px solid var(--border);
+      padding-bottom: 12px;
+      margin-bottom: 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+    }
+    .header-title h1 {
+      margin: 0;
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+      color: #111827;
+    }
+    .header-title .subtitle {
+      margin: 4px 0 0;
+      font-size: 13px;
+      color: var(--muted);
+      font-weight: 500;
+    }
+    .badge {
+      display: inline-block;
+      background: var(--accent-subtle);
+      color: var(--accent);
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 11.5px;
+      font-weight: 600;
+      border: 1px solid rgba(41, 130, 219, 0.25);
+    }
+    .quote-box {
+      background: var(--card-bg);
+      border-left: 3.5px solid var(--accent);
+      padding: 8px 14px;
+      margin-bottom: 16px;
+      border-radius: 0 6px 6px 0;
+      font-size: 12.5px;
+      color: #374151;
+      display: flex;
+      justify-content: space-between;
+    }
+    .note-box {
+      background: var(--accent-subtle);
+      border-left: 3.5px solid var(--accent);
+      padding: 8px 12px;
+      margin: 8px 0 12px;
+      border-radius: 0 6px 6px 0;
+      font-size: 12px;
+      color: #1e293b;
+    }
+    h2 {
+      font-size: 15px;
+      margin: 16px 0 8px;
+      color: #111827;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 4px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    p, ul, ol { margin: 0 0 10px; }
+    ul, ol { padding-left: 20px; }
+    li { margin-bottom: 4px; }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 12px;
+    }
+    .card h3 {
+      margin: 0 0 6px;
+      font-size: 13px;
+      color: #1f2937;
+    }
+    .code-box {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px 12px;
+      font-family: var(--font-mono);
+      font-size: 11.5px;
+      line-height: 1.45;
+      color: #24292e;
+      white-space: pre-wrap;
+      word-break: break-word;
+      margin-bottom: 12px;
+    }
+    .highlight {
+      font-weight: 600;
+      color: #0366d6;
+    }
+    .page-break {
+      page-break-before: always;
+    }
+    @media print {
+      body { font-size: 12.5px; }
+      .page-break { page-break-before: always; }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <div class="header-title">
+      <h1>🏛️ Karta Startowa LAB</h1>
+      <div class="subtitle">Przewodnik Błyskawicznej Instalacji ze Wsparciem AI (Showcase / As-Is)</div>
+    </div>
+    <div class="badge">LAB • MIT</div>
+  </div>
+
+  <div class="quote-box">
+    <span><em>„Środowisko ma pracować dla człowieka, a nie człowiek dla środowiska.”</em></span>
+    <span><b>Czas wdrożenia:</b> ~5 minut | <b>Koszt:</b> 0 zł</span>
+  </div>
+
+  <h2>1. Czym jest LAB (Twój PZW)?</h2>
+  <p><b>LAB</b> (<i>Twój Partner Zarządzania Wiedzą</i>) to prywatne, ciche i zorganizowane środowisko pracy na Twoim komputerze:</p>
+  <ul>
+    <li><b>100% Prywatności i własności:</b> Twoje notatki, pliki i zadania leżą na Twoim dysku w otwartych formatach (Markdown, TOML, SQLite). Zero uzależnienia od chmury.</li>
+    <li><b>Nienaruszalna Topografia 8 Pokoi:</b> Każda myśl, dokument, projekt i baza danych ma swoje stałe miejsce (od <code>01 Skrzynka/</code> po <code>08 Zespół AI/</code>).</li>
+    <li><b>Zespół AI i Zero-Pip:</b> Gotowa architektura ról (Adam, Ada, Maks, Kinga, Maja, Klara, Edyta) oraz silnik w <b>100% Python stdlib</b>.</li>
+  </ul>
+
+  <h2>2. Wymagania Wstępne (Tylko 2 darmowe elementy)</h2>
+  <div class="grid">
+    <div class="card">
+      <h3>1. Obsidian (Darmowy)</h3>
+      <p>Elegancki, minimalistyczny edytor notatek i Twój pulpit roboczy. Pobierz i zainstaluj ze strony: <span class="highlight">obsidian.md</span></p>
+    </div>
+    <div class="card">
+      <h3>2. Python 3.11+ (Darmowy)</h3>
+      <p><b>macOS:</b> Pobierz z <span class="highlight">python.org</span> lub Homebrew.<br>
+      <b>Windows:</b> Pobierz z <span class="highlight">python.org</span> (zaznacz: ☑️ <i>„Add python.exe to PATH”</i>).</p>
+    </div>
+  </div>
+
+  <h2>3. Instalacja Jednym Dwuklikiem Myszy (Kreator WWW)</h2>
+  <ol>
+    <li><b>Pobierz i rozpakuj</b> paczkę <code>LAB-Installer.zip</code> z GitHub Releases (<code>clazz2045/LAB</code>) lub sklonuj repozytorium. W rozpakowanym archiwum na wierzchu znajdują się wyłącznie dwa launchery, a cały wsad spoczywa w ukrytym katalogu <code>.lab-payload/</code>.</li>
+    <li><b>Uruchom instalator dwuklikiem myszy:</b>
+      <ul>
+        <li>🍏 <b>Mac:</b> Kliknij dwukrotnie plik: <b><code>LAB-Installer.command</code></b></li>
+        <li>🪟 <b>Windows:</b> Kliknij dwukrotnie plik: <b><code>LAB-Installer.bat</code></b></li>
+      </ul>
+    </li>
+    <li><b>Skonfiguruj instancję w kreatorze WWW:</b> imię, nazwa instancji (domyślnie <i>LAB</i>), motyw (<i>tokyonight</i>, <i>nord</i>, <i>nordic-snow</i>, <i>green</i>) oraz opcjonalnie GitHub i model LLM.</li>
+    <li><b>Otwórz w Obsidianie:</b> Uruchom Obsidian &rarr; Wybierz <i>„Open folder as vault”</i> &rarr; Wskaż utworzony katalog. <b>Gotowe!</b></li>
+  </ol>
+
+  <div class="note-box">
+    <b>Gatekeeper macOS:</b> Jeśli macOS zablokuje plik <code>LAB-Installer.command</code>, użyj <b>Control+klik &rarr; Otwórz</b> (lub <i>Ustawienia systemowe &rarr; Prywatność i ochrona &rarr; Otwórz mimo to</i>). Alternatywnie w Terminalu uruchom bez kwarantanny: <code>xattr -dr com.apple.quarantine . &amp;&amp; ./LAB-Installer.command</code>.<br>
+    <b>Widok GitHub &harr; Obsidian:</b> Obsidian celowo ukrywa pliki i katalogi systemowe w root (m.in. <code>.obsidian/</code>, <code>.lab-payload/</code>, skrypty <code>.py</code> i launchery), pokazując poza 8 Pokojami głównie <code>AGENTS.md</code>.
+  </div>
+
+  <div class="page-break"></div>
+
+  <h2>4. 🤖 Gotowy Prompt dla Twojego Asystenta AI (Antigravity / Claude / ChatGPT / Gemini)</h2>
+  <p>Jeśli wolisz, aby sztuczna inteligencja poprowadziła Cię za rękę, <b>skopiuj poniższą treść w całości i wklej ją do swojego czatu AI</b>:</p>
+
+  <div class="code-box">Cześć! Właśnie pobrałem paczkę startową LAB (mój Partner Zarządzania Wiedzą – PZW) i chcę postawić swoje prywatne środowisko pracy w Obsidianie.
+
+Jesteś moim cierpliwym, przyjaznym Wirtualnym Asystentem Wdrożenia LAB.
+
+Twoje zasady:
+1. Prowadź mnie za rękę krok po kroku. Zapytaj mnie najpierw, na jakim systemie pracuję (macOS czy Windows) i czy mam już zainstalowanego Obsidiana oraz Pythona 3.11+.
+2. Gdy potwierdzę uruchomienie instalatora dwuklikiem myszy (LAB-Installer.command / LAB-Installer.bat), wyjaśnij mi prosto, jak otworzyć nowo utworzony folder w programie Obsidian (oraz uspokój mnie, że Obsidian celowo ukrywa pliki techniczne poza AGENTS.md).
+3. Wytłumacz mi w 3 przejrzystych punktach, jak korzystać z 8 Pokoi LAB (przede wszystkim: czym różni się '01 Skrzynka' od '02 Warsztat' i '03 Projekty').
+4. Używaj prostego, naturalnego języka. Unikaj żargonu programistycznego. Po każdym kroku zadawaj mi jedno pytanie sprawdzające, czy wszystko poszło zgodnie z planem, zanim przejdziesz dalej.
+
+Zacznij od powitania i pierwszego pytania!</div>
+
+  <h2>5. Pierwsze 3 Minuty w Nowym Środowisku</h2>
+  <div class="grid">
+    <div class="card">
+      <h3>🛠️ 1. Otwórz Warsztat</h3>
+      <p>W folderze <code>02 Warsztat/</code> otwórz <code>Dashboard LAB.md</code>. Zobaczysz czysty stół i pulpit zadań.</p>
+    </div>
+    <div class="card">
+      <h3>📥 2. Pierwsza Myśl w Skrzynce</h3>
+      <p>W folderze <code>01 Skrzynka/</code> utwórz notatkę lub wrzuć plik PDF. Skrzynka opróżnia się do zera przez <code>drain_inbox.py</code>.</p>
+    </div>
+  </div>
+  <div class="card" style="margin-top: 6px;">
+    <h3>🚀 3. Twój Pierwszy Projekt</h3>
+    <p>W folderze <code>03 Projekty/</code> załóż podfolder <code>PR-001 Mój Pierwszy Projekt</code> i twórz swoje inicjatywy bez chaosu i rozpraszaczy.</p>
+  </div>
+
+  <div style="margin-top: 18px; text-align: center; color: var(--muted); font-size: 12px; border-top: 1px solid var(--border); padding-top: 10px;">
+    Witaj w cichym, uporządkowanym warsztacie pracy! • Ekosystem LAB (MIT, Showcase / As-Is)
+  </div>
+
+</body>
+</html>

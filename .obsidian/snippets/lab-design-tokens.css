@@ -1,0 +1,533 @@
+/* ==========================================================================
+   LAB (Framework PZW) — Dynamiczne Tokeny Design Systemu
+   Tryb: SYSTEM | Jasny: Rosé Pine Dawn (dawn) | Ciemny: Tokyo Night (tokyonight)
+   Wygenerowano deterministycznie z: lab.config.toml
+   ========================================================================== */
+
+:root {
+  /* Typografia interfejsu */
+  --lab-font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif;
+  --lab-font-mono: ui-monospace, 'SF Mono', Menlo, monospace;
+  --font-interface-theme: var(--lab-font-sans);
+  --font-text-theme: var(--lab-font-sans);
+  --font-monospace-theme: var(--lab-font-mono);
+
+  /* Paleta powierzchniowa motywu aktywnego (Rosé Pine Dawn) */
+  --lab-canvas: #faf4ed;
+  --lab-surface-1: #fffaf3;
+  --lab-surface-2: #f2e9de;
+  --lab-surface-3: #e4dbcd;
+  --lab-border: #dfdad3;
+  --lab-text-primary: #575279;
+  --lab-text-secondary: #797593;
+  --lab-accent: #b45309;
+
+  /* Kolory Pokoi LAB 3.0 (Prawo Rdzenia) */
+  --lab-room-01-color: #bf616a;
+  --lab-room-02-color: #d19a66;
+  --lab-room-03-color: #61afef;
+  --lab-room-04-color: #2982db;
+  --lab-room-05-color: #98c379;
+  --lab-room-06-color: #b48ead;
+  --lab-room-07-color: #b57a86;
+  --lab-room-08-color: #c678dd;
+}
+
+/* 1. Motyw Jasny (Aktywowany automatycznie przez macOS / Obsidian theme-light) */
+body.theme-light, .theme-light {
+  --background-primary: #faf4ed !important;
+  --background-primary-alt: #fffaf3 !important;
+  --background-secondary: #fffaf3 !important;
+  --background-secondary-alt: #f2e9de !important;
+  --background-modifier-border: #dfdad3 !important;
+  --background-modifier-form-field: #f2e9de !important;
+
+  /* Tokeny bazowe Obsidian v1.0+ */
+  --color-base-00: #faf4ed !important;
+  --color-base-10: #fffaf3 !important;
+  --color-base-20: #fffaf3 !important;
+  --color-base-25: #f2e9de !important;
+  --color-base-30: #f2e9de !important;
+  --color-base-35: #e4dbcd !important;
+  --color-base-40: #dfdad3 !important;
+  --color-base-50: #dfdad3 !important;
+
+  --text-normal: #575279 !important;
+  --text-muted: #797593 !important;
+  --text-faint: #797593 !important;
+  --text-accent: #b45309 !important;
+  --text-accent-hover: #b45309 !important;
+
+  --h1-color: #575279 !important;
+  --h2-color: #575279 !important;
+  --h3-color: #575279 !important;
+  --h4-color: #575279 !important;
+  --h5-color: #575279 !important;
+  --h6-color: #575279 !important;
+  --inline-title-color: #575279 !important;
+
+  --interactive-accent: #b45309 !important;
+  --interactive-accent-hover: #b45309 !important;
+  --nav-item-color-active: #b45309 !important;
+  --tab-text-color-active: #b45309 !important;
+}
+
+body.theme-light .workspace-leaf-content, .theme-light .workspace-leaf-content, body.theme-light .view-content, .theme-light .view-content, body.theme-light .markdown-source-view, .theme-light .markdown-source-view, body.theme-light .markdown-rendered, .theme-light .markdown-rendered, body.theme-light .cm-scroller, .theme-light .cm-scroller {
+  background-color: #faf4ed !important;
+}
+
+body.theme-light .workspace-leaf-content[data-type="file-explorer"], .theme-light .workspace-leaf-content[data-type="file-explorer"], body.theme-light .nav-files-container, .theme-light .nav-files-container, body.theme-light .workspace-ribbon, .theme-light .workspace-ribbon, body.theme-light .workspace-split.mod-left-split, .theme-light .workspace-split.mod-left-split, body.theme-light .workspace-split.mod-right-split, .theme-light .workspace-split.mod-right-split {
+  background-color: #fffaf3 !important;
+}
+
+body.theme-light .inline-title, .theme-light .inline-title, body.theme-light .markdown-rendered h1, .theme-light .markdown-rendered h1, body.theme-light .cm-header-1, .theme-light .cm-header-1, body.theme-light .markdown-rendered h2, .theme-light .markdown-rendered h2, body.theme-light .cm-header-2, .theme-light .cm-header-2, body.theme-light .markdown-rendered h3, .theme-light .markdown-rendered h3, body.theme-light .cm-header-3, .theme-light .cm-header-3 {
+  color: #575279 !important;
+}
+
+body.theme-light .nav-file-title.is-active .nav-file-title-content, .theme-light .nav-file-title.is-active .nav-file-title-content {
+  color: #b45309 !important;
+  font-weight: 600;
+}
+
+/* 2. Motyw Ciemny (Aktywowany automatycznie przez macOS / Obsidian theme-dark) */
+body.theme-dark, .theme-dark {
+  --background-primary: #1a1b26 !important;
+  --background-primary-alt: #1f2335 !important;
+  --background-secondary: #1f2335 !important;
+  --background-secondary-alt: #24283b !important;
+  --background-modifier-border: #292e42 !important;
+  --background-modifier-form-field: #24283b !important;
+
+  /* Tokeny bazowe Obsidian v1.0+ */
+  --color-base-00: #1a1b26 !important;
+  --color-base-10: #1f2335 !important;
+  --color-base-20: #1f2335 !important;
+  --color-base-25: #24283b !important;
+  --color-base-30: #24283b !important;
+  --color-base-35: #292e42 !important;
+  --color-base-40: #292e42 !important;
+  --color-base-50: #292e42 !important;
+
+  --text-normal: #c0caf5 !important;
+  --text-muted: #7982a9 !important;
+  --text-faint: #7982a9 !important;
+  --text-accent: #7aa2f7 !important;
+  --text-accent-hover: #7aa2f7 !important;
+
+  --h1-color: #c0caf5 !important;
+  --h2-color: #c0caf5 !important;
+  --h3-color: #c0caf5 !important;
+  --h4-color: #c0caf5 !important;
+  --h5-color: #c0caf5 !important;
+  --h6-color: #c0caf5 !important;
+  --inline-title-color: #c0caf5 !important;
+
+  --interactive-accent: #7aa2f7 !important;
+  --interactive-accent-hover: #7aa2f7 !important;
+  --nav-item-color-active: #7aa2f7 !important;
+  --tab-text-color-active: #7aa2f7 !important;
+}
+
+body.theme-dark .workspace-leaf-content, .theme-dark .workspace-leaf-content, body.theme-dark .view-content, .theme-dark .view-content, body.theme-dark .markdown-source-view, .theme-dark .markdown-source-view, body.theme-dark .markdown-rendered, .theme-dark .markdown-rendered, body.theme-dark .cm-scroller, .theme-dark .cm-scroller {
+  background-color: #1a1b26 !important;
+}
+
+body.theme-dark .workspace-leaf-content[data-type="file-explorer"], .theme-dark .workspace-leaf-content[data-type="file-explorer"], body.theme-dark .nav-files-container, .theme-dark .nav-files-container, body.theme-dark .workspace-ribbon, .theme-dark .workspace-ribbon, body.theme-dark .workspace-split.mod-left-split, .theme-dark .workspace-split.mod-left-split, body.theme-dark .workspace-split.mod-right-split, .theme-dark .workspace-split.mod-right-split {
+  background-color: #1f2335 !important;
+}
+
+body.theme-dark .inline-title, .theme-dark .inline-title, body.theme-dark .markdown-rendered h1, .theme-dark .markdown-rendered h1, body.theme-dark .cm-header-1, .theme-dark .cm-header-1, body.theme-dark .markdown-rendered h2, .theme-dark .markdown-rendered h2, body.theme-dark .cm-header-2, .theme-dark .cm-header-2, body.theme-dark .markdown-rendered h3, .theme-dark .markdown-rendered h3, body.theme-dark .cm-header-3, .theme-dark .cm-header-3 {
+  color: #c0caf5 !important;
+}
+
+body.theme-dark .nav-file-title.is-active .nav-file-title-content, .theme-dark .nav-file-title.is-active .nav-file-title-content {
+  color: #7aa2f7 !important;
+  font-weight: 600;
+}
+
+/* 3. Kolory Pokoi LAB (Prawo Rdzenia - dynamiczne z konfiguracji) */
+.nav-folder-title[data-path^="01 Skrzynka"] .nav-folder-title-content,
+.nav-folder-title:not([data-path*="/"])[data-path^="01 Skrzynka"] .nav-folder-title-content,
+.nav-folder-title:not([data-path*="/"])[data-path^="01 "] .nav-folder-title-content,
+.nav-folder-title[data-path="01 Skrzynka"] .nav-folder-title-content {
+  color: #bf616a !important;
+  font-weight: 600;
+}
+.nav-folder-title:not([data-path*="/"])[data-path^="01 Skrzynka"] .nav-folder-collapse-indicator,
+.nav-folder-title:not([data-path*="/"])[data-path^="01 "] .nav-folder-collapse-indicator,
+.nav-folder-title[data-path="01 Skrzynka"] .nav-folder-collapse-indicator {
+  color: #bf616a !important;
+}
+
+.nav-folder-title[data-path^="02 Warsztat"] .nav-folder-title-content,
+.nav-folder-title:not([data-path*="/"])[data-path^="02 Warsztat"] .nav-folder-title-content,
+.nav-folder-title:not([data-path*="/"])[data-path^="02 "] .nav-folder-title-content,
+.nav-folder-title[data-path="02 Warsztat"] .nav-folder-title-content {
+  color: #d19a66 !important;
+  font-weight: 600;
+}
+.nav-folder-title:not([data-path*="/"])[data-path^="02 Warsztat"] .nav-folder-collapse-indicator,
+.nav-folder-title:not([data-path*="/"])[data-path^="02 "] .nav-folder-collapse-indicator,
+.nav-folder-title[data-path="02 Warsztat"] .nav-folder-collapse-indicator {
+  color: #d19a66 !important;
+}
+
+.nav-folder-title[data-path^="03 Projekty"] .nav-folder-title-content,
+.nav-folder-title:not([data-path*="/"])[data-path^="03 Projekty"] .nav-folder-title-content,
+.nav-folder-title:not([data-path*="/"])[data-path^="03 "] .nav-folder-title-content,
+.nav-folder-title[data-path="03 Projekty"] .nav-folder-title-content {
+  color: #61afef !important;
+  font-weight: 600;
+}
+.nav-folder-title:not([data-path*="/"])[data-path^="03 Projekty"] .nav-folder-collapse-indicator,
+.nav-folder-title:not([data-path*="/"])[data-path^="03 "] .nav-folder-collapse-indicator,
+.nav-folder-title[data-path="03 Projekty"] .nav-folder-collapse-indicator {
+  color: #61afef !important;
+}
+
+.nav-folder-title[data-path^="04 Operacje"] .nav-folder-title-content,
+.nav-folder-title:not([data-path*="/"])[data-path^="04 Operacje"] .nav-folder-title-content,
+.nav-folder-title:not([data-path*="/"])[data-path^="04 "] .nav-folder-title-content,
+.nav-folder-title[data-path="04 Operacje"] .nav-folder-title-content {
+  color: #2982db !important;
+  font-weight: 600;
+}
+.nav-folder-title:not([data-path*="/"])[data-path^="04 Operacje"] .nav-folder-collapse-indicator,
+.nav-folder-title:not([data-path*="/"])[data-path^="04 "] .nav-folder-collapse-indicator,
+.nav-folder-title[data-path="04 Operacje"] .nav-folder-collapse-indicator {
+  color: #2982db !important;
+}
+
+.nav-folder-title[data-path^="05 Baza Wiedzy"] .nav-folder-title-content,
+.nav-folder-title:not([data-path*="/"])[data-path^="05 Baza Wiedzy"] .nav-folder-title-content,
+.nav-folder-title:not([data-path*="/"])[data-path^="05 "] .nav-folder-title-content,
+.nav-folder-title[data-path="05 Baza Wiedzy"] .nav-folder-title-content {
+  color: #98c379 !important;
+  font-weight: 600;
+}
+.nav-folder-title:not([data-path*="/"])[data-path^="05 Baza Wiedzy"] .nav-folder-collapse-indicator,
+.nav-folder-title:not([data-path*="/"])[data-path^="05 "] .nav-folder-collapse-indicator,
+.nav-folder-title[data-path="05 Baza Wiedzy"] .nav-folder-collapse-indicator {
+  color: #98c379 !important;
+}
+
+.nav-folder-title[data-path^="06 Zasoby"] .nav-folder-title-content,
+.nav-folder-title:not([data-path*="/"])[data-path^="06 Zasoby"] .nav-folder-title-content,
+.nav-folder-title:not([data-path*="/"])[data-path^="06 "] .nav-folder-title-content,
+.nav-folder-title[data-path="06 Zasoby"] .nav-folder-title-content {
+  color: #b48ead !important;
+  font-weight: 600;
+}
+.nav-folder-title:not([data-path*="/"])[data-path^="06 Zasoby"] .nav-folder-collapse-indicator,
+.nav-folder-title:not([data-path*="/"])[data-path^="06 "] .nav-folder-collapse-indicator,
+.nav-folder-title[data-path="06 Zasoby"] .nav-folder-collapse-indicator {
+  color: #b48ead !important;
+}
+
+.nav-folder-title[data-path^="07 Bazy Danych"] .nav-folder-title-content,
+.nav-folder-title:not([data-path*="/"])[data-path^="07 Bazy Danych"] .nav-folder-title-content,
+.nav-folder-title:not([data-path*="/"])[data-path^="07 "] .nav-folder-title-content,
+.nav-folder-title[data-path="07 Bazy Danych"] .nav-folder-title-content {
+  color: #b57a86 !important;
+  font-weight: 600;
+}
+.nav-folder-title:not([data-path*="/"])[data-path^="07 Bazy Danych"] .nav-folder-collapse-indicator,
+.nav-folder-title:not([data-path*="/"])[data-path^="07 "] .nav-folder-collapse-indicator,
+.nav-folder-title[data-path="07 Bazy Danych"] .nav-folder-collapse-indicator {
+  color: #b57a86 !important;
+}
+
+.nav-folder-title[data-path^="08 Zespół AI"] .nav-folder-title-content,
+.nav-folder-title:not([data-path*="/"])[data-path^="08 Zespół AI"] .nav-folder-title-content,
+.nav-folder-title:not([data-path*="/"])[data-path^="08 "] .nav-folder-title-content,
+.nav-folder-title[data-path="08 Zespół AI"] .nav-folder-title-content {
+  color: #c678dd !important;
+  font-weight: 600;
+}
+.nav-folder-title:not([data-path*="/"])[data-path^="08 Zespół AI"] .nav-folder-collapse-indicator,
+.nav-folder-title:not([data-path*="/"])[data-path^="08 "] .nav-folder-collapse-indicator,
+.nav-folder-title[data-path="08 Zespół AI"] .nav-folder-collapse-indicator {
+  color: #c678dd !important;
+}
+
+/* 4. Higiena Panelu Bocznego Obsidiana: Ukrycie plików i folderów technicznych (biała lista root) */
+.nav-folder:has(> .nav-folder-title[data-path="__pycache__"]),
+.nav-folder:has(> .nav-folder-title[data-path^="__pycache__"]),
+.nav-folder-title[data-path="__pycache__"],
+.nav-folder-title[data-path^="__pycache__"],
+.nav-folder-title[data-path="__pycache__"] + .nav-folder-children,
+.nav-folder-title[data-path^="__pycache__"] + .nav-folder-children,
+.nav-folder:has(> .nav-folder-title[data-path=".pytest_cache"]),
+.nav-folder-title[data-path=".pytest_cache"],
+.nav-folder-title[data-path=".pytest_cache"] + .nav-folder-children,
+.nav-files-container > div > .nav-file:has(> .nav-file-title:not([data-path="AGENTS.md"])),
+.nav-file:has(> .nav-file-title:not([data-path*="/"]):not([data-path="AGENTS.md"])),
+.nav-file-title:not([data-path*="/"]):not([data-path="AGENTS.md"]) {
+  display: none !important;
+}
+
+/* ==========================================================================
+   5. REGUŁY DRUKU I EKSPORTU DO PDF (@media print)
+   Gwarantuje perfekcyjną czystość i elegancję na papierze i w plikach PDF:
+   - Czyste tło, głęboka czerń tekstu (#0f172a / #1e293b)
+   - Tytuł H1 i H2 bez sztucznych belek i podkreśleń (styl czytnika Obsidiana)
+   - Karta cytatu/źródła pod tytułem z lewą belką akcentu i subtelnym tłem
+   - Delikatny separator hr (#e2e8f0)
+   - Równe wcięcia i pionowe odstępy dla list numerowanych (ol) i punktowanych (ul)
+   - Tabele w układzie zebra i czytelne callouty
+   - Ochrona przed łamaniem stron wewnątrz sekcji, tabel i diagramów
+   ========================================================================== */
+@media print {
+  :root,
+  body,
+  body.theme-dark,
+  body.theme-light,
+  body.theme-dark .workspace-leaf-content,
+  body.theme-dark .view-content,
+  body.theme-dark .markdown-source-view,
+  body.theme-dark .markdown-rendered,
+  body.theme-dark .cm-scroller,
+  body.theme-light .workspace-leaf-content,
+  body.theme-light .view-content,
+  body.theme-light .markdown-source-view,
+  body.theme-light .markdown-rendered,
+  body.theme-light .cm-scroller,
+  .theme-dark .workspace-leaf-content,
+  .theme-dark .view-content,
+  .theme-dark .markdown-rendered,
+  .theme-light .workspace-leaf-content,
+  .theme-light .view-content,
+  .theme-light .markdown-rendered,
+  .markdown-rendered,
+  .print {
+    --background-primary: #ffffff !important;
+    --background-primary-alt: #f8fafc !important;
+    --background-secondary: #f1f5f9 !important;
+    --text-normal: #0f172a !important;
+    --text-muted: #64748b !important;
+    --text-accent: #b45309 !important;
+    background: #ffffff !important;
+    background-color: #ffffff !important;
+    color: #0f172a !important;
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif !important;
+    font-size: 11pt !important;
+    line-height: 1.6 !important;
+  }
+
+  /* Wyłączenie ozdobników ekranowych */
+  .metadata-container,
+  .metadata-properties-heading,
+  .mod-header,
+  .workspace-ribbon,
+  .status-bar,
+  .side-dock-ribbon,
+  .view-header {
+    display: none !important;
+  }
+
+  /* Akapity i typografia podstawowa */
+  body.theme-dark p, body.theme-light p, .theme-dark p, .theme-light p, p {
+    color: #1e293b !important;
+    margin-top: 0.4em !important;
+    margin-bottom: 0.8em !important;
+    line-height: 1.6 !important;
+  }
+
+  /* Nagłówki dla druku - szlachetna typografia bez kresek pod spodem */
+  body.theme-dark .inline-title, body.theme-light .inline-title,
+  body.theme-dark .markdown-rendered h1, body.theme-light .markdown-rendered h1,
+  body.theme-dark .cm-header-1, body.theme-light .cm-header-1,
+  body.theme-dark h1, body.theme-light h1,
+  .inline-title, .markdown-rendered h1, .cm-header-1, h1 {
+    color: #0f172a !important;
+    font-size: 20pt !important;
+    font-weight: 800 !important;
+    border-bottom: none !important;
+    padding-bottom: 0 !important;
+    margin-top: 0.8em !important;
+    margin-bottom: 0.6em !important;
+    page-break-after: avoid !important;
+    break-after: avoid !important;
+  }
+
+  body.theme-dark .markdown-rendered h2, body.theme-light .markdown-rendered h2,
+  body.theme-dark .cm-header-2, body.theme-light .cm-header-2,
+  body.theme-dark h2, body.theme-light h2,
+  .markdown-rendered h2, .cm-header-2, h2 {
+    color: #0f172a !important;
+    font-size: 14.5pt !important;
+    font-weight: 700 !important;
+    border-bottom: none !important;
+    padding-bottom: 0 !important;
+    margin-top: 1.8em !important;
+    margin-bottom: 0.5em !important;
+    page-break-after: avoid !important;
+    break-after: avoid !important;
+  }
+
+  body.theme-dark .markdown-rendered h3, body.theme-light .markdown-rendered h3,
+  body.theme-dark .cm-header-3, body.theme-light .cm-header-3,
+  body.theme-dark h3, body.theme-light h3,
+  .markdown-rendered h3, .cm-header-3, h3 {
+    color: #1e293b !important;
+    font-size: 12pt !important;
+    font-weight: 700 !important;
+    margin-top: 1.4em !important;
+    margin-bottom: 0.4em !important;
+    page-break-after: avoid !important;
+    break-after: avoid !important;
+  }
+
+  body.theme-dark .markdown-rendered h4, body.theme-light .markdown-rendered h4,
+  body.theme-dark .cm-header-4, body.theme-light .cm-header-4,
+  body.theme-dark h4, body.theme-light h4,
+  .markdown-rendered h4, .cm-header-4, h4 {
+    color: #334155 !important;
+    font-size: 11pt !important;
+    font-weight: 600 !important;
+    page-break-after: avoid !important;
+    break-after: avoid !important;
+  }
+
+  /* Karta źródła / cytatu pod nagłówkiem (zgodna z widokiem Obsidiana) */
+  blockquote {
+    background-color: #f8fafc !important;
+    border: none !important;
+    border-left: 4px solid #b45309 !important;
+    border-radius: 4px !important;
+    padding: 10px 16px !important;
+    margin: 1.2em 0 !important;
+    color: #334155 !important;
+    font-style: normal !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  blockquote p {
+    margin: 0.3em 0 !important;
+    color: #334155 !important;
+  }
+
+  /* Subtelny separator hr */
+  hr {
+    border: none !important;
+    border-top: 1px solid #e2e8f0 !important;
+    margin: 24px 0 !important;
+    height: 0 !important;
+  }
+
+  /* Listy numerowane i punktowane - równe wcięcia i pionowe odstępy */
+  ol, ul {
+    margin-top: 0.6em !important;
+    margin-bottom: 0.8em !important;
+    padding-left: 1.8em !important;
+  }
+
+  li {
+    margin-bottom: 0.6em !important;
+    line-height: 1.55 !important;
+    color: #1e293b !important;
+  }
+
+  li > p {
+    margin: 0 !important;
+  }
+
+  /* Callouty w druku */
+  .callout {
+    background-color: #f8fafc !important;
+    border: 1px solid #cbd5e1 !important;
+    border-left: 4px solid #b45309 !important;
+    border-radius: 6px !important;
+    padding: 10px 14px !important;
+    margin: 1.2em 0 !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  .callout[data-callout="important"], .callout[data-callout="caution"] {
+    background-color: #fffbeb !important;
+    border-left-color: #d97706 !important;
+  }
+
+  .callout[data-callout="warning"] {
+    background-color: #fef2f2 !important;
+    border-left-color: #dc2626 !important;
+  }
+
+  .callout-title {
+    color: #0f172a !important;
+    font-weight: 700 !important;
+    font-size: 11pt !important;
+  }
+
+  .callout-content {
+    color: #1e293b !important;
+    font-size: 10.5pt !important;
+    line-height: 1.5 !important;
+  }
+
+  /* Tabele w druku - układ zebra i szary nagłówek */
+  table {
+    border-collapse: collapse !important;
+    width: 100% !important;
+    margin: 1.4em 0 !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  th {
+    background-color: #f8fafc !important;
+    color: #0f172a !important;
+    font-weight: 700 !important;
+    border: 1px solid #cbd5e1 !important;
+    padding: 8px 12px !important;
+    text-align: left !important;
+  }
+
+  td {
+    border: 1px solid #e2e8f0 !important;
+    padding: 8px 12px !important;
+    color: #1e293b !important;
+    vertical-align: top !important;
+  }
+
+  tr:nth-child(even) td {
+    background-color: #f8fafc !important;
+  }
+
+  /* Kod i diagramy */
+  code {
+    font-family: ui-monospace, 'SF Mono', Menlo, monospace !important;
+    font-size: 9.5pt !important;
+    background-color: #f1f5f9 !important;
+    color: #0f172a !important;
+    padding: 2px 5px !important;
+    border-radius: 4px !important;
+    border: 1px solid #e2e8f0 !important;
+  }
+
+  pre, .code-block {
+    background-color: #0f172a !important;
+    color: #f8fafc !important;
+    padding: 10px 14px !important;
+    border-radius: 6px !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  pre code, .code-block code {
+    background: transparent !important;
+    color: inherit !important;
+    border: none !important;
+    padding: 0 !important;
+  }
+
+  img, svg, .mermaid {
+    max-width: 100% !important;
+    height: auto !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    filter: none !important;
+  }
+}

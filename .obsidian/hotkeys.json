@@ -1,0 +1,82 @@
+{
+  "insert-template": [
+    {
+      "modifiers": [
+        "Mod",
+        "Alt"
+      ],
+      "key": "T"
+    }
+  ],
+  "zk-prefixer": [
+    {
+      "modifiers": [
+        "Mod",
+        "Alt"
+      ],
+      "key": "N"
+    }
+  ],
+  "daily-notes": [
+    {
+      "modifiers": [
+        "Mod",
+        "Alt"
+      ],
+      "key": "S"
+    }
+  ],
+  "properties:open-local": [
+    {
+      "modifiers": [
+        "Mod",
+        "Alt"
+      ],
+      "key": "P"
+    }
+  ],
+  "bookmarks:open-bookmark-1": [
+    {
+      "modifiers": [
+        "Mod",
+        "Alt"
+      ],
+      "key": "R"
+    }
+  ],
+  "bookmarks:open-bookmark-2": [
+    {
+      "modifiers": [
+        "Mod",
+        "Alt"
+      ],
+      "key": "B"
+    }
+  ],
+  "obsidian-shellcommands:shell-command-lab-export-pdf": [
+    {
+      "modifiers": [
+        "Mod",
+        "Shift"
+      ],
+      "key": "P"
+    }
+  ],
+  "app:reload": [
+    {
+      "modifiers": [
+        "Mod"
+      ],
+      "key": "R"
+    }
+  ],
+  "workspace:export-pdf": [
+    {
+      "modifiers": [
+        "Mod",
+        "Shift"
+      ],
+      "key": "P"
+    }
+  ]
+}

@@ -1,0 +1,416 @@
+/* ==========================================================================
+   LAB Print Themes — Baza Wydawnicza (_base_book.css)
+   Wspólna struktura dla układów: book (okładka + spis treści) oraz note.
+   Parametryzacja przez zmienne CSS w motywach: book-classic, swiss, editorial, manuscript.
+   ========================================================================== */
+
+:root {
+  --font-body: "Charter", "Iowan Old Style", "Palatino", "Georgia", serif;
+  --font-heading: "Charter", "Iowan Old Style", "Palatino", "Georgia", serif;
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
+
+  --color-ink: #111827;
+  --color-ink-soft: #374151;
+  --color-muted: #64748b;
+  --color-accent: #1e3a8a;
+  --color-rule: #cbd5e1;
+  --color-surface: #f8fafc;
+  --color-code-bg: #f1f5f9;
+
+  --body-size: 10.5pt;
+  --body-leading: 1.6;
+  --body-align: justify;
+  --body-hyphens: auto;
+  --h1-size: 20pt;
+  --h2-size: 13.5pt;
+  --h3-size: 11pt;
+}
+
+/* ==========================================================================
+   1. PAGINACJA I ŻYWA PAGINA (@page)
+   Domyślny format B5 (176mm x 250mm) z lustrzanymi marginesami.
+   export.py może nadpisać rozmiar na końcu arkusza: @page { size: A4; } / A5.
+   ========================================================================== */
+@page {
+  size: B5;
+  margin: 20mm 17mm 22mm 20mm;
+}
+
+@page :left {
+  margin: 20mm 21mm 22mm 16mm;
+  @bottom-left {
+    content: counter(page);
+    font-family: var(--font-ui);
+    font-size: 9pt;
+    color: #475569;
+  }
+}
+
+@page :right {
+  margin: 20mm 16mm 22mm 21mm;
+  @bottom-right {
+    content: counter(page);
+    font-family: var(--font-ui);
+    font-size: 9pt;
+    color: #475569;
+  }
+}
+
+/* Okładka i spis treści bez numeracji stron i żywej paginy */
+@page cover {
+  @top-left { content: none; }
+  @top-right { content: none; }
+  @bottom-left { content: none; }
+  @bottom-center { content: none; }
+  @bottom-right { content: none; }
+}
+
+@page toc {
+  @top-left { content: none; }
+  @top-right { content: none; }
+  @bottom-left { content: none; }
+  @bottom-center { content: none; }
+  @bottom-right { content: none; }
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+body {
+  font-family: var(--font-body);
+  font-size: var(--body-size);
+  line-height: var(--body-leading);
+  color: var(--color-ink);
+  background: #ffffff;
+  margin: 0;
+  padding: 0;
+}
+
+/* ==========================================================================
+   2. STRONA TYTUŁOWA (.cover-page)
+   ========================================================================== */
+.cover-page {
+  page: cover;
+  break-after: page;
+  page-break-after: always;
+  min-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 18mm 0 10mm 0;
+}
+
+.cover-header {
+  margin-top: 20mm;
+}
+
+.cover-kicker {
+  font-family: var(--font-ui);
+  font-size: 8.5pt;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-accent);
+  margin: 0 0 10pt 0;
+}
+
+.cover-title {
+  font-family: var(--font-heading);
+  font-size: 26pt;
+  font-weight: 800;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  color: var(--color-ink);
+  margin: 0 0 10pt 0;
+  border: none;
+  padding: 0;
+}
+
+.cover-subtitle {
+  font-family: var(--font-body);
+  font-size: 13pt;
+  font-weight: 400;
+  line-height: 1.4;
+  color: var(--color-ink-soft);
+  margin: 0;
+}
+
+.cover-rule {
+  width: 48pt;
+  height: 2pt;
+  background: var(--color-accent);
+  border: none;
+  margin: 18pt 0;
+}
+
+.cover-meta {
+  font-family: var(--font-ui);
+  font-size: 9.5pt;
+  line-height: 1.5;
+  color: var(--color-muted);
+  border-top: 1px solid var(--color-rule);
+  padding-top: 10pt;
+}
+
+.cover-author {
+  font-weight: 600;
+  color: var(--color-ink);
+}
+
+.cover-date,
+.cover-version {
+  display: inline-block;
+  margin-right: 12pt;
+}
+
+/* ==========================================================================
+   3. SPIS TREŚCI (.toc-page)
+   ========================================================================== */
+.toc-page {
+  page: toc;
+  break-after: page;
+  page-break-after: always;
+  padding-top: 6mm;
+}
+
+.toc-title {
+  font-family: var(--font-heading);
+  font-size: 16pt;
+  font-weight: 700;
+  color: var(--color-ink);
+  margin: 0 0 14pt 0;
+  padding-bottom: 5pt;
+  border-bottom: 1.5pt solid var(--color-ink);
+}
+
+.toc-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.toc-item {
+  display: flex;
+  align-items: baseline;
+  margin: 0 0 5pt 0;
+  font-family: var(--font-ui);
+  font-size: 9.5pt;
+  line-height: 1.4;
+}
+
+.toc-item.toc-h1 {
+  font-weight: 700;
+  color: var(--color-ink);
+  margin-top: 8pt;
+}
+
+.toc-item.toc-h2 {
+  font-weight: 400;
+  color: var(--color-ink-soft);
+  padding-left: 14pt;
+  font-size: 9pt;
+}
+
+.toc-item a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.toc-dots {
+  flex: 1;
+  border-bottom: 1px dotted var(--color-rule);
+  margin: 0 6pt;
+}
+
+/* ==========================================================================
+   4. TREŚĆ GŁÓWNA (.book-body / body)
+   ========================================================================== */
+.book-body h1,
+.book-body h2,
+.book-body h3,
+.book-body h4,
+h1, h2, h3, h4 {
+  font-family: var(--font-heading);
+  color: var(--color-ink);
+  break-after: avoid;
+  page-break-after: avoid;
+}
+
+h1 {
+  font-size: var(--h1-size);
+  font-weight: 800;
+  line-height: 1.2;
+  margin: 0 0 12pt 0;
+}
+
+.book-body h1:not(:first-of-type) {
+  break-before: page;
+  page-break-before: always;
+}
+
+h2 {
+  font-size: var(--h2-size);
+  font-weight: 700;
+  line-height: 1.28;
+  margin: 20pt 0 7pt 0;
+}
+
+h3 {
+  font-size: var(--h3-size);
+  font-weight: 700;
+  line-height: 1.35;
+  margin: 14pt 0 5pt 0;
+}
+
+.keep-with-next {
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+.book-body.chapter-breaks > h1:not(:first-of-type),
+.book-body.chapter-breaks > h2:not(:first-of-type),
+.book-body.chapter-breaks > .keep-with-next:has(> h2):not(:first-of-type) {
+  break-before: page;
+  page-break-before: always;
+}
+
+p {
+  margin: 0 0 8pt 0;
+  text-align: var(--body-align);
+  hyphens: var(--body-hyphens);
+  -webkit-hyphens: var(--body-hyphens);
+  orphans: 4;
+  widows: 4;
+}
+
+a {
+  color: var(--color-accent);
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+
+ol, ul {
+  padding-left: 18pt;
+  margin: 6pt 0 10pt 0;
+}
+
+li {
+  margin-bottom: 4pt;
+  text-align: var(--body-align);
+  hyphens: var(--body-hyphens);
+  -webkit-hyphens: var(--body-hyphens);
+}
+
+blockquote {
+  font-style: italic;
+  color: var(--color-ink-soft);
+  border-left: 2.5pt solid var(--color-accent);
+  padding: 2pt 0 2pt 11pt;
+  margin: 10pt 0;
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+blockquote p {
+  margin: 2pt 0;
+}
+
+code {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  background: var(--color-code-bg);
+  padding: 1pt 3.5pt;
+  border-radius: 2.5pt;
+  border: 0.5pt solid var(--color-rule);
+  color: var(--color-ink);
+}
+
+pre {
+  font-family: var(--font-mono);
+  font-size: 8.3pt;
+  line-height: 1.45;
+  background: var(--color-surface);
+  color: var(--color-ink);
+  padding: 9pt 11pt;
+  border: 0.75pt solid var(--color-rule);
+  border-left: 2.5pt solid var(--color-muted);
+  border-radius: 2.5pt;
+  overflow-x: auto;
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+pre code {
+  background: none;
+  border: none;
+  padding: 0;
+}
+
+.callout {
+  font-family: var(--font-ui);
+  font-size: 9.2pt;
+  line-height: 1.5;
+  background: var(--color-surface);
+  border: 0.75pt solid var(--color-rule);
+  border-left: 3pt solid var(--color-accent);
+  border-radius: 2.5pt;
+  padding: 8pt 11pt;
+  margin: 11pt 0;
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+.callout-header {
+  font-weight: 700;
+  font-size: 8.5pt;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin-bottom: 3pt;
+}
+
+.report-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-ui);
+  font-size: 8.8pt;
+  margin: 12pt 0;
+  border-top: 1.5pt solid var(--color-ink);
+  border-bottom: 1.5pt solid var(--color-ink);
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+.report-table th {
+  font-weight: 700;
+  text-align: left;
+  color: var(--color-ink);
+  padding: 5.5pt 7pt;
+  border-bottom: 0.75pt solid var(--color-ink-soft);
+}
+
+.report-table td {
+  padding: 5pt 7pt;
+  border-bottom: 0.5pt solid var(--color-rule);
+  vertical-align: top;
+}
+
+.report-table tr:last-child td {
+  border-bottom: none;
+}
+
+img, svg, .mermaid {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  margin: 10pt auto;
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+hr {
+  border: none;
+  border-top: 0.75pt solid var(--color-rule);
+  margin: 16pt 0;
+}

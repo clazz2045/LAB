@@ -1,0 +1,50 @@
+/* ==========================================================================
+   Motyw: editorial — Nowoczesny podręcznik / magazyn
+   Wyraziste nagłówki bezszeryfowe + szeryfowy tekst główny + akcenty.
+   Ładować po _base_book.css.
+   ========================================================================== */
+
+:root {
+  --font-body: "Charter", "Iowan Old Style", "Georgia", serif;
+  --font-heading: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", sans-serif;
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+
+  --color-ink: #0f172a;
+  --color-ink-soft: #334155;
+  --color-muted: #64748b;
+  --color-accent: #1d4ed8;
+  --color-rule: #cbd5e1;
+  --color-surface: #f8fafc;
+  --color-code-bg: #f1f5f9;
+
+  --body-size: 10.2pt;
+  --body-leading: 1.6;
+  --body-align: justify;
+  --body-hyphens: auto;
+  --h1-size: 20pt;
+  --h2-size: 13.5pt;
+  --h3-size: 11pt;
+}
+
+.book-body h1 {
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  padding-bottom: 5pt;
+  border-bottom: 2pt solid var(--color-accent);
+}
+
+.book-body h2 {
+  font-weight: 700;
+  color: var(--color-accent);
+  padding-bottom: 3pt;
+  border-bottom: 0.75pt solid var(--color-rule);
+}
+
+.callout-note, .callout-info { background: #eff6ff; border-left-color: #2563eb; color: #1e3a8a; }
+.callout-tip { background: #f0fdf4; border-left-color: #16a34a; color: #14532d; }
+.callout-warning { background: #fef2f2; border-left-color: #dc2626; color: #7f1d1d; }
+.callout-important { background: #fffbeb; border-left-color: #d97706; color: #78350f; }
+
+.report-table th {
+  background: var(--color-surface);
+}
