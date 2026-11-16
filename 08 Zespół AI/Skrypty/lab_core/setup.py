@@ -141,7 +141,7 @@ def _render_wizard_html() -> str:
 <div class="card">
   <h1>LAB – Konfiguracja własna</h1>
   <div class="progress" id="progressLabel">Krok 1 z 12</div>
-  <form method="POST" action="/install" id="wizardForm">
+  <form method="POST" action="/install" id="wizardForm" autocomplete="off">
 
     <div class="step active" data-step="1">
       <h2>1. Imię właściciela systemu</h2>
@@ -322,10 +322,13 @@ function showStep(n) {{
   }}
   var idx = visible.indexOf(n) + 1;
   var visibleTotal = visible.length;
+  var isLast = (idx === visibleTotal);
+  var submitBtn = document.getElementById("submitBtn");
   document.getElementById("progressLabel").textContent = "Krok " + idx + " z " + visibleTotal;
   document.getElementById("prevBtn").style.display = (idx === 1) ? "none" : "inline-block";
-  document.getElementById("nextBtn").style.display = (idx === visibleTotal) ? "none" : "inline-block";
-  document.getElementById("submitBtn").style.display = (idx === visibleTotal) ? "inline-block" : "none";
+  document.getElementById("nextBtn").style.display = isLast ? "none" : "inline-block";
+  submitBtn.style.display = isLast ? "inline-block" : "none";
+  submitBtn.disabled = !isLast;
   if (n === totalSteps) {{
     renderSummary();
   }}
@@ -368,6 +371,29 @@ function toggleIcloudWarn() {{
   document.getElementById("icloudWarn").style.display = (icEnabled && gh === "yes") ? "block" : "none";
   showStep(currentStep);
 }}
+
+var wizardForm = document.getElementById("wizardForm");
+wizardForm.addEventListener("keydown", function(e) {{
+  if (e.key === "Enter" && e.target && e.target.tagName !== "TEXTAREA") {{
+    if (currentStep < totalSteps) {{
+      e.preventDefault();
+      changeStep(1);
+    }}
+  }}
+}});
+wizardForm.addEventListener("submit", function(e) {{
+  if (currentStep < totalSteps) {{
+    e.preventDefault();
+    return false;
+  }}
+  return true;
+}});
+window.addEventListener("pageshow", function(e) {{
+  if (e.persisted) {{
+    currentStep = 1;
+    showStep(1);
+  }}
+}});
 
 showStep(1);
 </script>
@@ -594,25 +620,31 @@ def _build_options_from_form(form: Dict[str, List[str]]) -> InstallOptions:
     )
 
 
-def run_web_wizard(open_browser: bool = True) -> int:
-    """Uruchamia lokalny kreator WWW na 127.0.0.1 (losowy wolny port)."""
-    done_event = threading.Event()
-    result_holder: Dict[str, InstallResult] = {}
-
+def _make_wizard_handler(
+    done_event: threading.Event,
+    result_holder: Dict[str, InstallResult],
+):
+    """Tworzy handler HTTP dla kreatora WWW z nagłówkami blokującymi cache."""
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, format: str, *args: Any) -> None:
             return
+
+        def _send_html(self, html_text: str) -> None:
+            body = html_text.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+            self.send_header("Pragma", "no-cache")
+            self.send_header("Expires", "0")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
 
         def do_GET(self) -> None:
             if self.path.split("?")[0] != "/":
                 self.send_error(404)
                 return
-            body = _render_wizard_html().encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+            self._send_html(_render_wizard_html())
 
         def do_POST(self) -> None:
             if self.path.split("?")[0] != "/install":
@@ -624,15 +656,19 @@ def run_web_wizard(open_browser: bool = True) -> int:
             options = _build_options_from_form(form)
             res = LabEngineInstaller(options).run()
             result_holder["result"] = res
-            body = _render_result_html(res).encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+            self._send_html(_render_result_html(res))
             threading.Timer(0.4, done_event.set).start()
 
-    server = HTTPServer(("127.0.0.1", 0), Handler)
+    return Handler
+
+
+def run_web_wizard(open_browser: bool = True) -> int:
+    """Uruchamia lokalny kreator WWW na 127.0.0.1 (losowy wolny port)."""
+    done_event = threading.Event()
+    result_holder: Dict[str, InstallResult] = {}
+    handler_cls = _make_wizard_handler(done_event, result_holder)
+
+    server = HTTPServer(("127.0.0.1", 0), handler_cls)
     port = server.server_address[1]
     url = f"http://127.0.0.1:{port}/"
     print(f"Kreator WWW LAB {LAB_VERSION} uruchomiony pod adresem: {url}")
