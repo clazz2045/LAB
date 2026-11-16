@@ -219,6 +219,38 @@ class TestUnprocessedThoughtBlocks(unittest.TestCase):
             self.assertIn("1 nieprzetworzonych bloków myśli", rollover_errors[0].message)
             self.assertEqual(len(thought_errors), 1)
 
+    def test_workshop_inspector_rollover_allows_updated_trailing_progress_note(self):
+        with tempfile.TemporaryDirectory() as tmp_str:
+            vault = Path(tmp_str) / "Vault"
+            install_lab_vault(vault, skip_preflight=True, run_smoke_check=False)
+            ws_dir = vault / "02 Warsztat"
+            arch_dir = ws_dir / "_archiwum" / "2026" / "11"
+            arch_dir.mkdir(parents=True, exist_ok=True)
+
+            (arch_dir / "2026-11-15 – Agenda Robocza.md").write_text(
+                "---\ntype: workbench-agenda\nstatus: archived\n---\n\n"
+                "## 🎯 Główne Wątki Robocze na Dziś\n\n"
+                "- [ ] [ZADANIE] **Broszura:** Poprawić tabelkę. *(Częściowo wykonane w Etapie 1).*\n\n"
+                "---\n\n"
+                "## ✍️ Dosłowny Zapis Porannych Myśli Zbigniew\n\n",
+                encoding="utf-8",
+            )
+            (ws_dir / "2026-11-16 – Agenda Robocza.md").write_text(
+                "---\ntype: workbench-agenda\nstatus: in_progress\n---\n\n"
+                "## 🎯 Główne Wątki Robocze na Dziś\n\n"
+                "- [ ] [ZADANIE] **Broszura:** Poprawić tabelkę. *(Zrealizowano w sesji 3; pozostało E2E).*\n\n"
+                "---\n\n"
+                "## ✍️ Dosłowny Zapis Porannych Myśli Zbigniew\n\n",
+                encoding="utf-8",
+            )
+
+            cfg = ConfigManager(vault_root=vault)
+            ctx = QualityContext(vault_root=vault, config=cfg)
+            WorkshopAndThoughtsInspector().inspect(ctx)
+
+            rollover_errors = [f for f in ctx.findings if f.level == "error" and f.category == "agenda_rollover"]
+            self.assertEqual(rollover_errors, [])
+
     def test_workshop_inspector_allows_tmp_notes_and_rejects_invalid_files(self):
         with tempfile.TemporaryDirectory() as tmp_str:
             vault = Path(tmp_str) / "Vault"

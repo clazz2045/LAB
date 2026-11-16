@@ -182,12 +182,13 @@
         <li>🪟 <b>Windows:</b> Kliknij dwukrotnie plik: <b><code>LAB-Installer.bat</code></b></li>
       </ul>
     </li>
-    <li><b>Skonfiguruj instancję w kreatorze WWW:</b> imię, nazwa instancji (domyślnie <i>LAB</i>), motyw (<i>tokyonight</i>, <i>nord</i>, <i>nordic-snow</i>, <i>green</i>) oraz opcjonalnie GitHub i model LLM.</li>
+    <li><b>Skonfiguruj instancję w kreatorze krok-po-kroku (jedno okienko = jedna decyzja):</b> imię, nazwa instancji (domyślnie <i>LAB</i>), motyw (<i>tokyonight</i>, <i>nord</i>, <i>nordic-snow</i>, <i>green</i>) oraz opcjonalnie iCloud, GitHub i model LLM.</li>
     <li><b>Otwórz w Obsidianie:</b> Uruchom Obsidian &rarr; Wybierz <i>„Open folder as vault”</i> &rarr; Wskaż utworzony katalog. <b>Gotowe!</b></li>
   </ol>
 
   <div class="note-box">
     <b>Gatekeeper macOS:</b> Jeśli macOS zablokuje plik <code>LAB-Installer.command</code>, użyj <b>Control+klik &rarr; Otwórz</b> (lub <i>Ustawienia systemowe &rarr; Prywatność i ochrona &rarr; Otwórz mimo to</i>). Alternatywnie w Terminalu uruchom bez kwarantanny: <code>xattr -dr com.apple.quarantine . &amp;&amp; ./LAB-Installer.command</code>.<br>
+    <b>iCloud Drive (macOS):</b> Jeśli umieszczasz skarbiec w iCloud Drive, wyłącz opcję <b>Optymalizuj pamięć Mac (<code>Optimize Mac Storage = OFF</code>)</b> w ustawieniach iCloud Drive, aby pliki lokalne nie znikały z dysku.<br>
     <b>Widok GitHub &harr; Obsidian:</b> Obsidian celowo ukrywa pliki i katalogi systemowe w root (m.in. <code>.obsidian/</code>, <code>.lab-payload/</code>, skrypty <code>.py</code> i launchery), pokazując poza 8 Pokojami głównie <code>AGENTS.md</code>.
   </div>
 
@@ -216,7 +217,7 @@ Zacznij od powitania i pierwszego pytania!</div>
     </div>
     <div class="card">
       <h3>📥 2. Pierwsza Myśl w Skrzynce</h3>
-      <p>W folderze <code>01 Skrzynka/</code> utwórz notatkę lub wrzuć plik PDF. Skrzynka opróżnia się do zera przez <code>drain_inbox.py</code>.</p>
+      <p>W folderze <code>01 Skrzynka/</code> utwórz notatkę lub wrzuć plik PDF. Skrzynka opróżnia się do zera automatycznie podczas pracy z asystentem AI (drenaż Skrzynki).</p>
     </div>
   </div>
   <div class="card" style="margin-top: 6px;">

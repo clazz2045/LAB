@@ -23,6 +23,11 @@ def _line_indent(line: str) -> int:
     return len(expanded) - len(expanded.lstrip(" "))
 
 
+def _strip_trailing_progress_note(task_body: str) -> str:
+    """Usuwa końcową adnotację postępu '*(...)*' aktualizowaną w trakcie sesji."""
+    return re.sub(r"\s*\*\((?:(?!\)\.?\*).)*\)\.?\*\.?\s*$", "", task_body).strip()
+
+
 def extract_agenda_section(content: str, section_kind: str) -> str:
     """Zwraca treść sekcji 'threads' (## 🎯) lub 'thoughts' (## ✍️) z Agendy Roboczej."""
     if section_kind == "threads":
@@ -423,7 +428,10 @@ class WorkshopAndThoughtsInspector(QualityInspector):
                         for task in extract_unfinished_agenda_tasks(prev_content):
                             first_line = task.splitlines()[0].strip() if task.splitlines() else ""
                             task_body = normalize_nfc(re.sub(r"^\s*-\s*\[[\sxX]\]\s*", "", first_line).strip())
-                            if task_body and task_body not in active_threads_norm:
+                            core_body = _strip_trailing_progress_note(task_body)
+                            if task_body and task_body not in active_threads_norm and (
+                                not core_body or core_body not in active_threads_norm
+                            ):
                                 missing_tasks_count += 1
 
                         active_thoughts_norm = normalize_nfc(extract_agenda_section(content, "thoughts")).replace("~~", "")

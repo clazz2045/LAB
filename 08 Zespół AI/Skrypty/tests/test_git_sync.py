@@ -80,15 +80,16 @@ class TestGitSyncAndQG2(unittest.TestCase):
 
         # 2. Ścisła weryfikacja białej listy na całym wyeksportowanym drzewie
         actual_root_entries = {p.name for p in self.target.iterdir() if p.name != ".git"}
-        expected_root_entries = ALLOWED_ROOT_FILES | DEFAULT_ROOM_PATHS | {".obsidian", "08 Zespół AI", "docs"}
+        expected_root_entries = ALLOWED_ROOT_FILES | DEFAULT_ROOM_PATHS | {".agents", ".obsidian", "08 Zespół AI", "docs"}
         self.assertEqual(actual_root_entries, expected_root_entries)
 
         actual_docs_entries = {p.name for p in (self.target / "docs").iterdir()}
         self.assertEqual(
             actual_docs_entries,
             {
-                "RS-002.11_Podrecznik_AI.pdf",
-                "Use_Cases_LAB.pdf",
+                "Podrecznik_Korzystania_z_AI.pdf",
+                "AI_Handbook_EN.pdf",
+                "Przyklady_Uzycia_LAB.pdf",
                 "Karta_Startowa_LAB.md",
                 "Karta_Startowa_LAB.html",
             },

@@ -1,0 +1,22 @@
+{
+  "lab-governance-guard": {
+    "enabled": true,
+    "PreToolUse": [
+      {
+        "matcher": "run_command|read_file|write_file|edit_file",
+        "hooks": [
+          {
+            "command": "python3 \"../08 Zespół AI/Skrypty/lab_core/pre_tool_guard.py\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "command": "python3 \"../08 Zespół AI/Skrypty/lab_core/stop_guard.py\"",
+        "timeout": 5
+      }
+    ]
+  }
+}

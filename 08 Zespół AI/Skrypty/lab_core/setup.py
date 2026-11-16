@@ -375,6 +375,47 @@ showStep(1);
 </html>"""
 
 
+_STARTER_PROMPT_TEXT = (
+    "Cześć! Właśnie pobrałem paczkę startową LAB (mój Partner Zarządzania Wiedzą – PZW) "
+    "i chcę postawić swoje prywatne środowisko pracy w Obsidianie.\n\n"
+    "Jesteś moim cierpliwym, przyjaznym Wirtualnym Asystentem Wdrożenia LAB.\n\n"
+    "Twoje zasady:\n"
+    "1. Prowadź mnie za rękę krok po kroku. Zapytaj mnie najpierw, na jakim systemie pracuję "
+    "(macOS czy Windows) i czy mam już zainstalowanego Obsidiana oraz Pythona 3.11+.\n"
+    "2. Gdy potwierdzę uruchomienie instalatora dwuklikiem myszy "
+    "(LAB-Installer.command / LAB-Installer.bat), wyjaśnij mi prosto, jak otworzyć nowo utworzony "
+    "folder w programie Obsidian (oraz uspokój mnie, że Obsidian celowo ukrywa pliki techniczne poza AGENTS.md).\n"
+    "3. Wytłumacz mi w 3 przejrzystych punktach, jak korzystać z 8 Pokoi LAB "
+    "(przede wszystkim: czym różni się '01 Skrzynka' od '02 Warsztat' i '03 Projekty').\n"
+    "4. Używaj prostego, naturalnego języka. Unikaj żargonu programistycznego. "
+    "Po każdym kroku zadawaj mi jedno pytanie sprawdzające, czy wszystko poszło zgodnie z planem, "
+    "zanim przejdziesz dalej.\n\n"
+    "Zacznij od powitania i pierwszego pytania!"
+)
+
+
+def _load_starter_card_html() -> str:
+    """Wczytuje pełną zawartość Karty Startowej HTML z paczki docs/ lub konfiguracji [vcs].public_docs."""
+    candidates: List[Path] = [_root_dir / "docs" / "Karta_Startowa_LAB.html"]
+    try:
+        from core_config import ConfigManager
+        cfg = ConfigManager(vault_root=_root_dir)
+        public_docs = cfg._raw_data.get("vcs", {}).get("public_docs", [])
+        if isinstance(public_docs, list):
+            for rel in public_docs:
+                if isinstance(rel, str) and rel.endswith("Karta_Startowa_LAB.html"):
+                    candidates.append(_root_dir / rel)
+    except Exception:
+        pass
+    for path in candidates:
+        if path.is_file():
+            try:
+                return path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+    return ""
+
+
 def _render_result_html(result: InstallResult) -> str:
     """Generuje ekran końcowy kreatora WWW."""
     target_str = str(result.target_dir)
@@ -386,6 +427,20 @@ def _render_result_html(result: InstallResult) -> str:
     cfg_status = "Błąd" if "BŁĄD" in smoke_joined or not result.success else "OK"
     db_status = "Błąd" if ("SQLite" in smoke_joined and "BŁĄD" in smoke_joined) or not result.success else "OK"
     env_status = "Błąd" if ("session_bootstrap" in smoke_joined and "BŁĄD" in smoke_joined) or not result.success else "OK"
+    starter_prompt_js = html.escape(json.dumps(_STARTER_PROMPT_TEXT), quote=True)
+    starter_card_html = _load_starter_card_html()
+    starter_card_section = (
+        f"""
+  <div class="box">
+    <details open>
+      <summary style="cursor:pointer;font-weight:700;color:#93c5fd;">📖 Pełna Karta Startowa LAB (przewodnik użytkownika)</summary>
+      <p style="margin:8px 0;font-size:12px;color:#94a3b8;">Plik źródłowy znajdziesz też w katalogu <code>docs/Karta_Startowa_LAB.html</code> (oraz <code>.md</code>) w paczce instalacyjnej.</p>
+      <iframe title="Karta Startowa LAB" srcdoc="{html.escape(starter_card_html, quote=True)}" style="width:100%;height:520px;border:1px solid #334155;border-radius:8px;background:#fff;"></iframe>
+    </details>
+  </div>"""
+        if starter_card_html
+        else ""
+    )
 
     return f"""<!DOCTYPE html>
 <html lang="pl">
@@ -444,6 +499,14 @@ def _render_result_html(result: InstallResult) -> str:
       <li>Środowisko: <strong>{env_status}</strong></li>
     </ul>
   </div>
+
+  <div class="box">
+    <strong>🤖 Łatwy start z AI — Prompt Inicjujący (z Karty Startowej):</strong>
+    <p style="margin:6px 0 8px 0;">W pliku <code>Karta_Startowa_LAB.html</code> / <code>.md</code> znajduje się gotowy prompt inicjujący, który ułatwi rozpoczęcie pracy z systemem LAB. Skopiuj go poniżej i wklej do swojego czatu AI:</p>
+    <pre style="white-space:pre-wrap;background:#020617;border:1px solid #334155;border-radius:8px;padding:12px;font-size:12px;line-height:1.45;color:#cbd5e1;margin:0;">{html.escape(_STARTER_PROMPT_TEXT)}</pre>
+    <button class="btn" type="button" id="copyPromptBtn" onclick="copyStarterPrompt()">Kopiuj prompt inicjujący</button>
+  </div>
+  {starter_card_section}
 </div>
 <script>
 function copyVaultPath() {{
@@ -455,6 +518,17 @@ function copyVaultPath() {{
     }});
   }} else {{
     btn.textContent = "Zaznacz i skopiuj ścieżkę powyżej";
+  }}
+}}
+function copyStarterPrompt() {{
+  var promptText = {starter_prompt_js};
+  var btn = document.getElementById("copyPromptBtn");
+  if (navigator.clipboard && navigator.clipboard.writeText) {{
+    navigator.clipboard.writeText(promptText).then(function() {{
+      btn.textContent = "Skopiowano prompt!";
+    }});
+  }} else {{
+    btn.textContent = "Zaznacz i skopiuj prompt powyżej";
   }}
 }}
 </script>

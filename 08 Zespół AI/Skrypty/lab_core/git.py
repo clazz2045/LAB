@@ -335,6 +335,10 @@ def is_allowed_export_relpath(
     if top == "docs":
         return len(parts) == 2 and rel_path.suffix.lower() in ALLOWED_DOCS_EXTENSIONS
 
+    # 2c. Hooki governance Antigravity (.agents/hooks.json)
+    if top == ".agents":
+        return len(parts) == 2 and parts[1] == "hooks.json"
+
     # 3. Puste pokoje 01–07 (wyłącznie .gitkeep)
     rooms = empty_room_paths if empty_room_paths is not None else DEFAULT_ROOM_PATHS
     if top in rooms:
@@ -519,6 +523,15 @@ class GitSyncManager:
                             shutil.copymode(src_f, dst_f)
                     else:
                         shutil.copy2(src_f, dst_f)
+
+        # 2b. Hooki governance Antigravity (.agents/hooks.json)
+        hooks_src = self.vault_root / ".agents" / "hooks.json"
+        if hooks_src.is_file():
+            hooks_dst = self.target_dir / ".agents" / "hooks.json"
+            synced.append((hooks_src, hooks_dst))
+            if not dry_run:
+                hooks_dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(hooks_src, hooks_dst)
 
         # 3. Puste pokoje 01–07 z .gitkeep
         for room_path in sorted(empty_rooms):

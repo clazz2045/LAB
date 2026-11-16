@@ -36,6 +36,7 @@ Przed uruchomieniem instalatora upewnij się, że masz na komputerze:
 2. **Python (3.11 lub nowszy):**
    * **macOS:** Zainstaluj z [python.org](https://www.python.org/downloads/) lub przez Homebrew (`brew install python@3.11`).
    * **Windows:** Pobierz z [python.org](https://www.python.org/downloads/) – **BARDZO WAŻNE:** podczas instalacji zaznacz pole wyboru: ☑️ *„Add python.exe to PATH”*.
+   * **iCloud Drive (macOS):** Jeśli umieszczasz skarbiec w iCloud Drive, wyłącz opcję **Optymalizuj dysk Maca (`Optimize Mac Storage = OFF`)** w ustawieniach iCloud Drive, aby pliki nie znikały z dysku lokalnego.
 
 *(To wszystko! LAB nie wymaga instalowania żadnych pakietów `pip` ani zewnętrznych serwerów).*
 
@@ -54,10 +55,11 @@ Przed uruchomieniem instalatora upewnij się, że masz na komputerze:
      ```bash
      xattr -dr com.apple.quarantine . && ./LAB-Installer.command
      ```
-3. **Skonfiguruj instancję w kreatorze WWW** (lub przez CLI `--non-interactive`):
+3. **Skonfiguruj instancję w kreatorze krok-po-kroku** (jedno okienko = jedna decyzja, lub przez CLI `--non-interactive`):
    * Imię / zwrot do użytkownika oraz nazwa instancji (domyślnie: *LAB*),
    * Motyw kolorystyczny (*tokyonight*, *nord*, *nordic-snow*, *green*),
    * Integracja z GitHubem (`[vcs]`), iCloud oraz wybrany model LLM (`[ai_team.llm]`, np. Antigravity / Claude).
+   * **Uwaga – iCloud Drive na macOS:** Jeśli trzymasz skarbiec w iCloud Drive, upewnij się w *Ustawieniach systemowych → Apple ID → iCloud → iCloud Drive*, że opcja **Optymalizuj pamięć Mac (`Optimize Mac Storage`) = OFF** (wyłączona) – zapobiega to znikaniu plików lokalnych z dysku.
 4. **Otwórz skarbiec w Obsidianie:**
    * Uruchom **Obsidian** &rarr; **Open folder as vault** (*Otwórz folder jako skarbiec*) &rarr; wskaż katalog nowo utworzonego skarbca.
    * **Uwaga – Widok GitHub ↔ Obsidian:** Obsidian automatycznie ukrywa pliki i katalogi systemowe w katalogu głównym (np. `.obsidian/`, `.gitignore`, `.lab-payload/`, skrypty `.py` i launchery `LAB-Installer.*`), pokazując poza 8 Pokojami (`01–08`) przede wszystkim plik `AGENTS.md`. To zamierzone zachowanie – pełne drzewo plików zobaczysz w Finderze/Eksploratorze lub na GitHubie.
@@ -90,7 +92,7 @@ Zacznij od powitania i pierwszego pytania!
 1. **Otwórz Warsztat (`02 Warsztat/`):**
    * Otwórz `Dashboard LAB.md` – zobaczysz czysty kokpit operacyjny i tablicę zadań.
 2. **Wrzuć pierwszą myśl do Skrzynki (`01 Skrzynka/`):**
-   * Utwórz notatkę lub wrzuć plik PDF. Skrzynka opróżnia się do zera przez `drain_inbox.py`.
+   * Utwórz notatkę lub wrzuć plik PDF. Skrzynka opróżnia się do zera automatycznie podczas pracy z asystentem AI (drenaż Skrzynki).
 3. **Zaplanuj pierwszy cel (`03 Projekty/`):**
    * Utwórz folder `PR-001 Mój Pierwszy Projekt` i rozwijaj inicjatywę bez chaosu.
 
