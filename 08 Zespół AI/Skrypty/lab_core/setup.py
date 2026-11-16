@@ -275,15 +275,15 @@ def _render_wizard_html() -> str:
     </div>
 
     <div class="step" data-step="12">
-      <h2>Koniec. Zakończyliśmy parametryzowanie. Teraz przechodzimy do instalacji.</h2>
+      <h2>12. Podsumowanie przed instalacją</h2>
       <div class="box" id="summaryBox"></div>
-      <p class="comment">Komentarz: Kliknięcie „Utwórz LAB” utworzy strukturę pokoi, czystą bazę SQLite, konfigurację oraz uruchomi automatyczną weryfikację instalacji.</p>
+      <p class="comment">Komentarz: Sprawdź wszystkie ustawienia powyżej. Kliknięcie „Wróć” pozwoli poprawić dowolny krok bez utraty wpisanych danych, a „Zatwierdź i zainstaluj LAB” utworzy skarbiec.</p>
     </div>
 
     <div class="nav">
-      <button class="btn btn-sec" type="button" id="prevBtn" onclick="changeStep(-1)" style="display:none;">Wstecz</button>
+      <button class="btn btn-sec" type="button" id="prevBtn" onclick="changeStep(-1)" style="display:none;">Wróć</button>
       <button class="btn" type="button" id="nextBtn" onclick="changeStep(1)">Dalej</button>
-      <button class="btn" type="submit" id="submitBtn" style="display:none;">Utwórz LAB</button>
+      <button class="btn" type="submit" id="submitBtn" style="display:none;">Zatwierdź i zainstaluj LAB</button>
     </div>
   </form>
 </div>
@@ -344,18 +344,43 @@ function changeStep(delta) {{
   showStep(currentStep);
 }}
 
+function _esc(s) {{
+  return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}}
+
+function _agentVal(name) {{
+  var el = document.querySelector('input[name="agent_' + name + '"]');
+  return el ? el.value : "";
+}}
+
 function renderSummary() {{
   var loc = document.getElementById("locSelect").value;
   if (loc === "__custom__") loc = document.getElementById("f_custom_location").value;
+  var instName = document.getElementById("f_instance_name").value || "LAB";
+  var fullVaultPath = (loc || "").replace(/[/]+$/, "") + "/" + instName;
+  var darkRadio = document.querySelector('input[name="theme_preset_dark"]:checked');
+  var darkTheme = darkRadio ? darkRadio.value : "tokyonight";
+  var lightTheme = document.getElementById("f_theme_light").value;
+  var icloudConfirm = isIcloudEnabled() ? (document.getElementById("f_confirm_icloud").checked ? " (Optimize Storage = OFF: potwierdzone)" : " (Optimize Storage = OFF: niepotwierdzone)") : "";
+  var agentsText = [
+    "Koordynator: " + _agentVal("coordinator"),
+    "Audytor: " + _agentVal("auditor"),
+    "Inżynier: " + _agentVal("engineer"),
+    "Architekt Danych: " + _agentVal("database_code"),
+    "Design: " + _agentVal("designer"),
+    "Badacz: " + _agentVal("researcher"),
+    "Synteza: " + _agentVal("knowledge")
+  ].map(_esc).join(", ");
   var html = "<ul>"
-    + "<li><strong>Właściciel:</strong> " + document.getElementById("f_user_name").value + "</li>"
-    + "<li><strong>Nazwa sejfu:</strong> " + document.getElementById("f_instance_name").value + "</li>"
-    + "<li><strong>Lokalizacja:</strong> " + loc + "</li>"
-    + "<li><strong>iCloud:</strong> " + document.getElementById("icloudSelect").value + "</li>"
-    + "<li><strong>GitHub:</strong> " + document.getElementById("githubSelect").value + "</li>"
-    + "<li><strong>Projekty / Operacje:</strong> " + document.getElementById("f_enable_projects").value + " / " + document.getElementById("f_enable_operations").value + "</li>"
-    + "<li><strong>Środowisko AI:</strong> " + document.getElementById("f_llm_provider").value + "</li>"
-    + "<li><strong>Tryb motywu:</strong> " + document.getElementById("f_theme_mode").value + "</li>"
+    + "<li><strong>Właściciel systemu:</strong> " + _esc(document.getElementById("f_user_name").value) + "</li>"
+    + "<li><strong>Nazwa instancji LAB:</strong> " + _esc(instName) + "</li>"
+    + "<li><strong>Lokalizacja skarbca:</strong> <code>" + _esc(fullVaultPath) + "</code></li>"
+    + "<li><strong>iCloud Drive:</strong> " + _esc(document.getElementById("icloudSelect").value + icloudConfirm) + "</li>"
+    + "<li><strong>GitHub:</strong> " + _esc(document.getElementById("githubSelect").value) + "</li>"
+    + "<li><strong>Moduły (Projekty / Operacje):</strong> " + _esc(document.getElementById("f_enable_projects").value) + " / " + _esc(document.getElementById("f_enable_operations").value) + "</li>"
+    + "<li><strong>Środowisko AI (LLM):</strong> " + _esc(document.getElementById("f_llm_provider").value) + "</li>"
+    + "<li><strong>Motywy Obsidiana:</strong> tryb " + _esc(document.getElementById("f_theme_mode").value) + " (ciemny: " + _esc(darkTheme) + ", jasny: " + _esc(lightTheme) + ")</li>"
+    + "<li><strong>Imiona agentów AI:</strong> " + agentsText + "</li>"
     + "</ul>";
   document.getElementById("summaryBox").innerHTML = html;
 }}
@@ -442,7 +467,7 @@ def _load_starter_card_html() -> str:
     return ""
 
 
-def _render_result_html(result: InstallResult) -> str:
+def _render_result_html(result: InstallResult, options: Optional[InstallOptions] = None) -> str:
     """Generuje ekran końcowy kreatora WWW."""
     target_str = str(result.target_dir)
     target_js = html.escape(json.dumps(target_str), quote=True)
@@ -453,6 +478,53 @@ def _render_result_html(result: InstallResult) -> str:
     cfg_status = "Błąd" if "BŁĄD" in smoke_joined or not result.success else "OK"
     db_status = "Błąd" if ("SQLite" in smoke_joined and "BŁĄD" in smoke_joined) or not result.success else "OK"
     env_status = "Błąd" if ("session_bootstrap" in smoke_joined and "BŁĄD" in smoke_joined) or not result.success else "OK"
+
+    owner_name = options.user_name if options else "—"
+    inst_name = options.instance_name if options else result.instance_name
+    icloud_txt = (
+        ("włączony" if options.icloud_enabled else "wyłączony")
+        if (options and options.icloud_enabled is not None)
+        else "autodetekcja"
+    )
+    github_txt = ("włączony" if options.github_enabled else "wyłączony") if options else "—"
+    modules_txt = (
+        f"Projekty: {'tak' if options.enable_projects else 'nie'}, Operacje: {'tak' if options.enable_operations else 'nie'}"
+        if options
+        else "—"
+    )
+    llm_txt = options.llm_provider if options else "—"
+    theme_txt = (
+        f"tryb {options.theme_mode} (ciemny: {options.theme_preset_dark}, jasny: {options.theme_preset_light})"
+        if options
+        else "—"
+    )
+    agents_map = options.agent_names if (options and options.agent_names) else DEFAULT_AGENT_NAMES
+    agents_summary = ", ".join(
+        f"{label}: {agents_map.get(key, DEFAULT_AGENT_NAMES[key])}"
+        for key, label in (
+            ("coordinator", "Koordynator"),
+            ("auditor", "Audytor"),
+            ("engineer", "Inżynier"),
+            ("database_code", "Architekt Danych"),
+            ("designer", "Design"),
+            ("researcher", "Badacz"),
+            ("knowledge", "Synteza"),
+        )
+    )
+    config_summary_html = f"""
+  <div class="box" id="installedConfigSummary">
+    <strong>Podsumowanie zastosowanej konfiguracji:</strong>
+    <ul>
+      <li>Właściciel systemu: <strong>{html.escape(owner_name)}</strong></li>
+      <li>Nazwa instancji LAB: <strong>{html.escape(inst_name)}</strong></li>
+      <li>Lokalizacja skarbca: <code>{html.escape(target_str)}</code></li>
+      <li>iCloud / GitHub: <strong>{html.escape(icloud_txt)}</strong> / <strong>{html.escape(github_txt)}</strong></li>
+      <li>Moduły: <strong>{html.escape(modules_txt)}</strong></li>
+      <li>Środowisko AI (LLM): <strong>{html.escape(llm_txt)}</strong></li>
+      <li>Motyw Obsidiana: <strong>{html.escape(theme_txt)}</strong></li>
+      <li>Imiona agentów AI: <strong>{html.escape(agents_summary)}</strong></li>
+    </ul>
+  </div>"""
     starter_prompt_js = html.escape(json.dumps(_STARTER_PROMPT_TEXT), quote=True)
     starter_card_html = _load_starter_card_html()
     starter_card_section = (
@@ -525,6 +597,7 @@ def _render_result_html(result: InstallResult) -> str:
       <li>Środowisko: <strong>{env_status}</strong></li>
     </ul>
   </div>
+  {config_summary_html}
 
   <div class="box">
     <strong>🤖 Łatwy start z AI — Prompt Inicjujący (z Karty Startowej):</strong>
@@ -656,7 +729,7 @@ def _make_wizard_handler(
             options = _build_options_from_form(form)
             res = LabEngineInstaller(options).run()
             result_holder["result"] = res
-            self._send_html(_render_result_html(res))
+            self._send_html(_render_result_html(res, options=options))
             threading.Timer(0.4, done_event.set).start()
 
     return Handler

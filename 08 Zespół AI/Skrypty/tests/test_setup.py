@@ -12,7 +12,7 @@ _SCRIPTS_DIR = Path(__file__).resolve().parent.parent
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
-from lab_core.installer import InstallResult  # noqa: E402
+from lab_core.installer import DEFAULT_AGENT_NAMES, InstallOptions, InstallResult  # noqa: E402
 from lab_core.setup import (  # noqa: E402
     _make_wizard_handler,
     _render_result_html,
@@ -30,6 +30,16 @@ class TestSetupWebWizard(unittest.TestCase):
         self.assertIn("changeStep(1);", html_out)
         self.assertIn('wizardForm.addEventListener("submit"', html_out)
         self.assertIn('window.addEventListener("pageshow"', html_out)
+
+    def test_wizard_summary_step_and_back_button(self) -> None:
+        html_out = _render_wizard_html()
+        self.assertIn("12. Podsumowanie przed instalacją", html_out)
+        self.assertIn('onclick="changeStep(-1)"', html_out)
+        self.assertIn(">Wróć</button>", html_out)
+        self.assertIn(">Zatwierdź i zainstaluj LAB</button>", html_out)
+        self.assertIn("Imiona agentów AI:", html_out)
+        self.assertIn("Motywy Obsidiana:", html_out)
+        self.assertIn("Lokalizacja skarbca:", html_out)
 
     def test_wizard_http_server_sends_no_cache_headers(self) -> None:
         class _FakeSocket:
@@ -60,15 +70,32 @@ class TestSetupWebWizard(unittest.TestCase):
         self.assertIn('id="wizardForm" autocomplete="off"', body)
 
     def test_result_html_includes_starter_prompt_and_card(self) -> None:
+        agents = dict(DEFAULT_AGENT_NAMES)
+        agents["engineer"] = "Borys"
+        opts = InstallOptions(
+            target_dir=Path("/tmp/LAB-Test"),
+            instance_name="LAB-Custom",
+            user_name="Jan",
+            theme_mode="dark",
+            theme_preset_dark="nord",
+            theme_preset_light="dawn",
+            llm_provider="antigravity",
+            agent_names=agents,
+        )
         res = InstallResult(
             success=True,
             target_dir=Path("/tmp/LAB-Test"),
-            instance_name="LAB",
+            instance_name="LAB-Custom",
             elapsed_seconds=0.1,
         )
-        html_out = _render_result_html(res)
+        html_out = _render_result_html(res, options=opts)
         self.assertIn("Kopiuj prompt inicjujący", html_out)
         self.assertIn("Pełna Karta Startowa LAB", html_out)
+        self.assertIn("Podsumowanie zastosowanej konfiguracji:", html_out)
+        self.assertIn("Jan", html_out)
+        self.assertIn("LAB-Custom", html_out)
+        self.assertIn("ciemny: nord", html_out)
+        self.assertIn("Inżynier: Borys", html_out)
 
 
 if __name__ == "__main__":
