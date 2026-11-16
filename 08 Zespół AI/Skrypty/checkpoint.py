@@ -44,6 +44,7 @@ except ImportError:
     check_quality = None
 
 from lab_core.quality.inspectors.workshop import (
+    detect_unprocessed_thought_blocks,
     extract_agenda_section,
     extract_unfinished_agenda_tasks,
 )
@@ -179,15 +180,25 @@ class SessionCheckpoint:
         return modified
 
     def check_active_agenda(self) -> Dict[str, Any]:
-        """Odczytuje aktywną Agendę Roboczą Dnia i zwraca otwarte pozycje (- [ ]) z sekcji '## 🎯'."""
+        """Odczytuje aktywną Agendę Roboczą Dnia i zwraca otwarte pozycje (- [ ]) oraz nieoznaczone myśli."""
         try:
             ws_room = self.config.get_room_by_role("daily-workbench")
             ws_dir = self.vault_root / ws_room.path
         except ConfigError:
-            return {"agenda_file": None, "section_found": False, "open_tasks": []}
+            return {
+                "agenda_file": None,
+                "section_found": False,
+                "open_tasks": [],
+                "unprocessed_thought_blocks": 0,
+            }
 
         if not ws_dir.is_dir():
-            return {"agenda_file": None, "section_found": False, "open_tasks": []}
+            return {
+                "agenda_file": None,
+                "section_found": False,
+                "open_tasks": [],
+                "unprocessed_thought_blocks": 0,
+            }
 
         agendas: List[Tuple[datetime.date, Path]] = []
         for item in ws_dir.iterdir():
@@ -203,7 +214,12 @@ class SessionCheckpoint:
                 continue
 
         if not agendas:
-            return {"agenda_file": None, "section_found": False, "open_tasks": []}
+            return {
+                "agenda_file": None,
+                "section_found": False,
+                "open_tasks": [],
+                "unprocessed_thought_blocks": 0,
+            }
 
         agendas.sort(key=lambda x: x[0], reverse=True)
         agenda_path = agendas[0][1]
@@ -212,18 +228,23 @@ class SessionCheckpoint:
         try:
             content = agenda_path.read_text(encoding="utf-8")
         except OSError:
-            return {"agenda_file": rel_agenda, "section_found": False, "open_tasks": []}
+            return {
+                "agenda_file": rel_agenda,
+                "section_found": False,
+                "open_tasks": [],
+                "unprocessed_thought_blocks": 0,
+            }
 
         section_body = extract_agenda_section(content, "threads")
-        if not section_body:
-            return {"agenda_file": rel_agenda, "section_found": False, "open_tasks": []}
-
-        raw_tasks = extract_unfinished_agenda_tasks(content)
+        raw_tasks = extract_unfinished_agenda_tasks(content) if section_body else []
         open_tasks = [t.splitlines()[0].strip() for t in raw_tasks if t.strip()]
+        unprocessed_thoughts = detect_unprocessed_thought_blocks(content)
+
         return {
             "agenda_file": rel_agenda,
-            "section_found": True,
+            "section_found": bool(section_body),
             "open_tasks": open_tasks,
+            "unprocessed_thought_blocks": len(unprocessed_thoughts),
         }
 
     def check_project_progress_sync(
@@ -513,9 +534,15 @@ Zamknięcie okna roboczego sesji, synchronizacja stanu i weryfikacja integralno�
 
         sig = calculate_signature(session_id, timestamp_iso, len(modified_files), vault_status)
         agenda_check = self.check_active_agenda()
-        proj_warnings = self.check_project_progress_sync(
+        warnings = self.check_project_progress_sync(
             modified_files, agenda_rel_path=agenda_check.get("agenda_file")
         )
+        unproc_thoughts = int(agenda_check.get("unprocessed_thought_blocks", 0) or 0)
+        if unproc_thoughts > 0:
+            agenda_name = agenda_check.get("agenda_file") or "Agenda Robocza"
+            warnings.append(
+                f"[WARNING] {agenda_name}: pozostało {unproc_thoughts} nieoznaczonych bloków myśli w sekcji '## ✍️'."
+            )
 
         receipt = SessionReceipt(
             receipt_id=receipt_id,
@@ -530,7 +557,7 @@ Zamknięcie okna roboczego sesji, synchronizacja stanu i weryfikacja integralno�
             instance_name=self.config.instance_name,
             compliance={k: compliance[k] for k in ("status", "reads_before_first_invoke", "write_calls", "violations") if k in compliance},
             agenda_check=agenda_check,
-            warnings=proj_warnings,
+            warnings=warnings,
             telemetry=telemetry_dict,
         )
 
@@ -551,26 +578,33 @@ def format_receipt_json_dict(
 
 
 def render_agenda_reminder(agenda_check: Dict[str, Any]) -> str:
-    """Renderuje przypomnienie kontrolne o otwartych wątkach w Agendzie Roboczej Dnia."""
+    """Renderuje przypomnienie kontrolne o otwartych wątkach i myślach w Agendzie Roboczej Dnia."""
     agenda_file = agenda_check.get("agenda_file")
     if not agenda_file:
         return "KONTROLA AGENDY ROBOCZEJ: brak aktywnej Agendy w pokoju Warsztat."
 
-    if not agenda_check.get("section_found"):
-        return f"KONTROLA AGENDY ROBOCZEJ ({agenda_file}): brak sekcji '## 🎯 Główne Wątki Robocze na Dziś'."
+    unproc = int(agenda_check.get("unprocessed_thought_blocks", 0) or 0)
+    lines: List[str] = []
 
-    open_tasks = agenda_check.get("open_tasks") or []
-    if not open_tasks:
-        return (
-            f"KONTROLA AGENDY ROBOCZEJ ({agenda_file}):\n"
-            "  Wszystkie pozycje w sekcji '## 🎯 Główne Wątki Robocze na Dziś' są zamknięte."
+    if not agenda_check.get("section_found"):
+        lines.append(f"KONTROLA AGENDY ROBOCZEJ ({agenda_file}): brak sekcji '## 🎯 Główne Wątki Robocze na Dziś'.")
+    else:
+        open_tasks = agenda_check.get("open_tasks") or []
+        if not open_tasks:
+            lines.append(
+                f"KONTROLA AGENDY ROBOCZEJ ({agenda_file}):\n"
+                "  Wszystkie pozycje w sekcji '## 🎯 Główne Wątki Robocze na Dziś' są zamknięte."
+            )
+        else:
+            lines.append(f"PRZYPOMNIENIE KONTROLNE – OTWARTE POZYCJE W AGENDZIE ({agenda_file}):")
+            lines.append(f"  Sekcja '## 🎯 Główne Wątki Robocze na Dziś' ({len(open_tasks)} otwarte):")
+            lines.extend(f"  {task}" for task in open_tasks)
+
+    if unproc > 0:
+        lines.append(
+            f"  ⚠️ Ostrzeżenie: Wykryto {unproc} nieoznaczonych bloków myśli w sekcji '## ✍️ Dosłowny Zapis Porannych Myśli'."
         )
 
-    lines = [
-        f"PRZYPOMNIENIE KONTROLNE – OTWARTE POZYCJE W AGENDZIE ({agenda_file}):",
-        f"  Sekcja '## 🎯 Główne Wątki Robocze na Dziś' ({len(open_tasks)} otwarte):",
-    ]
-    lines.extend(f"  {task}" for task in open_tasks)
     return "\n".join(lines)
 
 
@@ -597,7 +631,7 @@ def render_terminal_receipt(receipt: SessionReceipt) -> str:
         lines.append(render_agenda_reminder(receipt.agenda_check))
         lines.append("=" * 64)
     if receipt.warnings:
-        lines.append("OSTRZEŻENIA PROJEKTOWE (PROGRESS-REPORT):")
+        lines.append("OSTRZEŻENIA KONTROLNE:")
         lines.extend(f"  {w}" for w in receipt.warnings)
         lines.append("=" * 64)
     if receipt.telemetry:

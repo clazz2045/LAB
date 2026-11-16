@@ -23,7 +23,9 @@ Przyjmuje intencje, pytania i polecenia od Właściciela Systemu (Właściciela 
 ## 3. Protokół Wyjścia i Przekazania
 Koordynator kończy turę natychmiast po zwróceniu syntezy i pytania decyzyjnego do człowieka LUB po wysłaniu dyspozycji do subagenta.
 
-**Obowiązek aktualizacji Agendy Roboczej:** Koordynator aktualizuje statusy w sekcji `## 🎯 Główne Wątki Robocze na Dziś` bieżącej Agendy Roboczej (`- [x]` oraz link do artefaktu lub podsumowania postępu) na bieżąco po zakończeniu każdego wątku oraz obowiązkowo przed uruchomieniem `/checkpoint`.
+**Obowiązek dwutorowej aktualizacji Agendy Roboczej:** Koordynator aktualizuje bieżącą Agendę na bieżąco po zakończeniu każdego wątku oraz obowiązkowo przed uruchomieniem `/checkpoint`:
+- **Wątki (`🎯 Główne Wątki Robocze na Dziś`):** odznaczanie `- [x]` oraz link do artefaktu lub krótkie podsumowanie postępu.
+- **Myśli (`✍️ Dosłowny Zapis Porannych Myśli`):** oznaczanie każdej przeanalizowanej myśli wzorcem `> ✅ Przetworzono (YYYY-MM-DD): <podsumowanie>` oraz `<!-- processed -->` (z bezwzględną ochroną oryginalnego tekstu użytkownika).
 
 ## 4. Twarde Ograniczenia Deterministyczne
 - **Pre-Flight Sparing Gate:** Przy każdej nowej propozycji zmiany reguł, kodu lub architektury zakaz uruchamiania subagenta wykonawczego (Maksa, Kingi, Mai, Edyty) w tej samej turze przed przeprowadzeniem tury sparingowej: 1) krytyka i słabe punkty (zarówno propozycji, jak i obecnych zapisów w `AGENTS.md`, np. ryzyko nakładek lub naruszenia *Jednego Prawa*), 2) prostsza lub redukująca kod alternatywa, 3) pytanie o wybór konkretnego wariantu. Delegacja wykonawcza następuje dopiero po wyraźnej akceptacji wybranego wariantu przez Właściciela Systemu (wyjątek: natychmiastowy bilet Circuit Breaker dla statusu BROKEN).

@@ -238,6 +238,44 @@ class TestCheckpointAndBootstrap(unittest.TestCase):
         finally:
             shutil.rmtree(tmp)
 
+    def test_checkpoint_warns_on_unprocessed_thought_blocks(self):
+        from checkpoint import SessionCheckpoint, render_terminal_receipt
+        tmp = Path(tempfile.mkdtemp()).resolve()
+        try:
+            shutil.copy2(find_vault_root() / "lab.config.toml", tmp / "lab.config.toml")
+            cfg = ConfigManager(vault_root=tmp)
+            ws_dir = tmp / cfg.get_room_by_role("daily-workbench").path
+            ws_dir.mkdir(parents=True, exist_ok=True)
+            agenda_path = ws_dir / "2026-11-15 – Agenda Robocza.md"
+            agenda_content = (
+                "---\ntype: agenda\n---\n# Agenda\n\n"
+                "## 🎯 Główne Wątki Robocze na Dziś\n\n"
+                "- [x] [ZADANIE] Zadanie zrobione\n\n"
+                "## ✍️ Dosłowny Zapis Porannych Myśli\n\n"
+                "Oryginalna poranna myśl 1.\n"
+                "---\n"
+                "Oryginalna poranna myśl 2.\n"
+                "---\n"
+            )
+            agenda_path.write_text(agenda_content, encoding="utf-8")
+
+            tr = _write(tmp / "t.jsonl", [_call(1, "read_file"), _invoke(2)])
+            cp = SessionCheckpoint(vault_root=tmp)
+            receipt = cp.run_checkpoint(dry_run=True, transcript_path=tr)
+
+            self.assertTrue(receipt.agenda_check["section_found"])
+            self.assertEqual(receipt.agenda_check["open_tasks"], [])
+            self.assertEqual(receipt.agenda_check["unprocessed_thought_blocks"], 2)
+            self.assertTrue(any("2 nieoznaczonych bloków myśli" in w for w in receipt.warnings))
+
+            rendered = render_terminal_receipt(receipt)
+            self.assertIn("OSTRZEŻENIA KONTROLNE", rendered)
+            self.assertIn("2 nieoznaczonych bloków myśli", rendered)
+            # Upewnij się, że plik Agendy nie został zmodyfikowany (Reguła 1)
+            self.assertEqual(agenda_path.read_text(encoding="utf-8"), agenda_content)
+        finally:
+            shutil.rmtree(tmp)
+
     def test_bootstrap_prints_coordinator_contract(self):
         from session_bootstrap import SessionBootstrap, format_text_output
         tmp = Path(tempfile.mkdtemp()).resolve()
