@@ -528,10 +528,25 @@ showStep(1);
 </html>"""
 
 
-def _build_starter_prompt(coordinator_name: str = "Adam", owner_name: str = "") -> str:
+_STARTER_PROVIDER_LABELS = {
+    "antigravity": "Antigravity",
+    "claude": "Claude Code",
+    "codex": "OpenAI Codex CLI",
+}
+
+
+def _build_starter_prompt(
+    coordinator_name: str = "Adam",
+    owner_name: str = "",
+    llm_provider: str = "",
+) -> str:
     """Buduje spersonalizowany prompt inicjujący dla Koordynatora nowej instancji."""
     coord = (coordinator_name or "Adam").strip()
     owner_hint = f" (właściciel: {owner_name.strip()})" if owner_name and owner_name.strip() else ""
+    provider_label = _STARTER_PROVIDER_LABELS.get(
+        (llm_provider or "").strip().lower(),
+        "Antigravity / Claude Code / OpenAI Codex CLI",
+    )
     return (
         f"Cześć {coord}! Właśnie uruchomiłem nową instancję LAB (mój Partner Zarządzania Wiedzą – PZW){owner_hint} "
         "i chcę rozpocząć pracę w Obsidianie.\n\n"
@@ -546,7 +561,7 @@ def _build_starter_prompt(coordinator_name: str = "Adam", owner_name: str = "") 
         "4. Po sprawdzeniu gotowości środowiska wyjaśnij mi prosto zasady higieny sesji i telemetrii:\n"
         "   - dlaczego każda odpowiedź kończy się paskiem zużycia tokenów,\n"
         "   - co oznacza próg higieniczny 200–250k tokenów i ostrzeżenia przed limitem,\n"
-        "   - jak bezpiecznie zamknąć sesję komendą /checkpoint i otworzyć nową sesję w Antigravity / Claude Code.\n"
+        f"   - jak bezpiecznie zamknąć sesję komendą /checkpoint i otworzyć nową sesję w {provider_label}.\n"
         "5. Używaj prostego, naturalnego języka. Unikaj żargonu programistycznego. "
         "Po każdym kroku zadawaj mi jedno pytanie sprawdzające, czy wszystko poszło zgodnie z planem, "
         "zanim przejdziesz dalej.\n\n"
@@ -642,7 +657,11 @@ def _render_result_html(result: InstallResult, options: Optional[InstallOptions]
         if options
         else DEFAULT_AGENT_NAMES["coordinator"]
     )
-    starter_prompt_text = _build_starter_prompt(coord_name, options.user_name if options else "")
+    starter_prompt_text = _build_starter_prompt(
+        coord_name,
+        options.user_name if options else "",
+        options.llm_provider if options else "",
+    )
     starter_prompt_js = html.escape(json.dumps(starter_prompt_text), quote=True)
     starter_card_html = _load_starter_card_html()
     starter_card_section = (
