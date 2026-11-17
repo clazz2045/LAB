@@ -167,7 +167,7 @@ Jeśli macOS zablokuje plik `LAB-Installer.command` komunikatem o nieznanym dewe
 ### Uwaga: Widok GitHub ↔ Obsidian
 Obsidian w nawigatorze plików ukrywa pliki i katalogi systemowe w katalogu głównym (m.in. `.obsidian/`, `.gitignore`, `.lab-payload/`, skrypty `.py` oraz launchery `LAB-Installer.*`), pokazując poza 8 Pokojami (`01–08`) przede wszystkim plik `AGENTS.md`. Pełną strukturę techniczną zobaczysz w Finderze, Eksploratorze plików lub bezpośrednio na GitHubie.
 
-Konfiguracja wzorcowa znajduje się w `lab.config.example.toml` (sekcje `[vcs]` oraz `[ai_team.llm]` dla **Antigravity** i **Claude**).
+Konfiguracja wzorcowa znajduje się w `lab.config.example.toml` (sekcje `[vcs]` oraz `[ai_team.llm]` dla **Antigravity**, **Claude** i **OpenAI Codex CLI**). W trybie **OpenAI Codex CLI** instalator wymaga katalogu lokalnego (poza iCloud Drive).
 
 ---
 
@@ -179,7 +179,7 @@ LAB/
 ├── lab-init.py              # Zunifikowany instalator i kreator WWW (http.server)
 ├── LAB-Installer.command    # Launcher macOS (sprawdza Python >= 3.11)
 ├── LAB-Installer.bat        # Launcher Windows (py -3)
-├── lab.config.example.toml  # Wzorzec konfiguracji ([vcs], [ai_team.llm] Antigravity i Claude)
+├── lab.config.example.toml  # Wzorzec konfiguracji ([vcs], [ai_team.llm] Antigravity, Claude, OpenAI Codex CLI)
 ├── pytest.py                # 100% stdlib runner testów (Zero-Pip)
 ├── AGENTS.md                # Główny kontrakt wejściowy Zespołu AI
 ├── LICENSE                  # Licencja MIT
@@ -221,6 +221,7 @@ python3 "08 Zespół AI/Skrypty/check_quality.py" --vault-root .
 3. **Bezpieczne zamknięcie i nowa sesja:** Uruchom **`/checkpoint`** (zapisuje stan Agendy i Dziennik Sesji), a następnie otwórz nową, świeżą rozmowę:
    - **Antigravity:** kliknij *New Chat* (`+`) w panelu konwersacji.
    - **Claude Code:** wpisz `/clear` (lub uruchom nową sesję `claude` w katalogu skarbca).
+   - **OpenAI Codex CLI:** uruchom nową sesję `codex` w katalogu skarbca (lub użyj `/new`).
 
 ---
 
