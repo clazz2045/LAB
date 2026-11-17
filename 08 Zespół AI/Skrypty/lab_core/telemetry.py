@@ -316,15 +316,28 @@ def _find_claude_transcripts(claude_projects_dir: Optional[Path] = None) -> List
     return candidates
 
 
+def _find_codex_transcripts(codex_sessions_dir: Optional[Path] = None) -> List[Path]:
+    """Zwraca listę plików sesji OpenAI Codex CLI (rollout-*.jsonl) z ~/.codex/sessions/."""
+    base = codex_sessions_dir or (Path.home() / ".codex" / "sessions")
+    if not base.is_dir():
+        return []
+    try:
+        return [p for p in base.rglob("rollout-*.jsonl") if p.is_file()]
+    except (PermissionError, OSError):
+        return []
+
+
 def find_latest_transcript(
     brain_dir: Optional[Union[str, Path]] = None,
     claude_dir: Optional[Union[str, Path]] = None,
+    codex_dir: Optional[Union[str, Path]] = None,
 ) -> Path:
     """
     Deterministycznie wyszukuje aktywny plik logu transkryptu sesji:
     Wybiera plik z najnowszym czasem modyfikacji (mtime) w strukturze:
     - Antigravity: ~/.gemini/antigravity/brain/*/.system_generated/logs/transcript.jsonl
     - Claude Code: ~/.claude/projects/*/*.jsonl
+    - Codex CLI: ~/.codex/sessions/**/rollout-*.jsonl
     """
     if brain_dir:
         base_dir = Path(brain_dir).expanduser().resolve()
@@ -357,10 +370,12 @@ def find_latest_transcript(
     if not brain_dir:
         c_dir = Path(claude_dir).expanduser().resolve() if claude_dir else None
         candidates.extend(_find_claude_transcripts(c_dir))
+        x_dir = Path(codex_dir).expanduser().resolve() if codex_dir else None
+        candidates.extend(_find_codex_transcripts(x_dir))
 
     if not candidates:
         raise TranscriptNotFoundError(
-            f"Nie odnaleziono żadnego pliku transkryptu sesji (Antigravity: {base_dir}, Claude Code: ~/.claude/projects)."
+            f"Nie odnaleziono żadnego pliku transkryptu sesji (Antigravity: {base_dir}, Claude Code: ~/.claude/projects, Codex CLI: ~/.codex/sessions)."
         )
 
     return max(candidates, key=lambda p: p.stat().st_mtime)
@@ -392,21 +407,15 @@ def parse_telemetry(
                     data = json.loads(line_str)
                     if not isinstance(data, dict):
                         continue
-                    if "input_tokens" in data:
-                        last_token_entry = data
-                    else:
-                        msg_usage = (data.get("message") or {}).get("usage") if isinstance(data.get("message"), dict) else None
-                        usage = msg_usage if isinstance(msg_usage, dict) else (data.get("usage") if isinstance(data.get("usage"), dict) else None)
-                        if usage and "input_tokens" in usage:
-                            last_token_entry = {
-                                "input_tokens": int(usage.get("input_tokens", 0) or 0),
-                                "cache_read_tokens": (
-                                    int(usage.get("cache_read_input_tokens", 0) or 0)
-                                    + int(usage.get("cache_creation_input_tokens", 0) or 0)
-                                ),
-                                "output_tokens": int(usage.get("output_tokens", 0) or 0),
-                                "step_index": data.get("step_index"),
-                            }
+                    extracted = _extract_usage_from_entry(data)
+                    if extracted is not None:
+                        in_tok, cache_tok, out_tok, step_idx = extracted
+                        last_token_entry = {
+                            "input_tokens": in_tok,
+                            "cache_read_tokens": cache_tok,
+                            "output_tokens": out_tok,
+                            "step_index": step_idx,
+                        }
                 except json.JSONDecodeError:
                     # Pomijamy niepełne lub uszkodzone linie logu
                     continue
@@ -414,6 +423,21 @@ def parse_telemetry(
         raise TelemetryDataError(f"Błąd wejścia/wyjścia podczas odczytu {path}: {e}") from e
 
     if last_token_entry is None:
+        if path.name.startswith("rollout-"):
+            zone, zone_icon, zone_display = calculate_zone(0, limit)
+            return TokenMetrics(
+                input_tokens=0,
+                cache_read_tokens=0,
+                output_tokens=0,
+                total_context_tokens=0,
+                limit=limit,
+                percentage=0.0,
+                zone=zone,
+                zone_icon=zone_icon,
+                zone_display=zone_display,
+                step_index=None,
+                transcript_path=str(path),
+            )
         raise TelemetryDataError(
             f"W pliku transkryptu '{path}' nie znaleziono żadnego wpisu z danymi 'input_tokens'."
         )
@@ -473,14 +497,33 @@ def _extract_usage_from_entry(data: Dict[str, Any]) -> Optional[Tuple[int, int, 
         except (ValueError, TypeError):
             return None
 
+    # Codex CLI rollout-*.jsonl: event_msg -> payload(type=token_count) -> info.last_token_usage / total_token_usage
+    if data.get("type") == "event_msg" and isinstance(data.get("payload"), dict):
+        p = data["payload"]
+        if p.get("type") == "token_count" and isinstance(p.get("info"), dict):
+            info = p["info"]
+            u = info.get("last_token_usage") or info.get("total_token_usage")
+            if isinstance(u, dict) and "input_tokens" in u:
+                try:
+                    in_tok = int(u.get("input_tokens", 0) or 0)
+                    cache_tok = int(u.get("cached_input_tokens", 0) or 0)
+                    out_tok = int(u.get("output_tokens", 0) or 0)
+                    return in_tok, cache_tok, out_tok, None
+                except (ValueError, TypeError):
+                    return None
+
     msg_usage = (data.get("message") or {}).get("usage") if isinstance(data.get("message"), dict) else None
     usage = msg_usage if isinstance(msg_usage, dict) else (data.get("usage") if isinstance(data.get("usage"), dict) else None)
     if usage and "input_tokens" in usage:
         try:
             in_tok = int(usage.get("input_tokens", 0) or 0)
+            cache_details = usage.get("input_tokens_details")
+            cached_detail = int(cache_details.get("cached_tokens", 0) or 0) if isinstance(cache_details, dict) else 0
             cache_tok = (
                 int(usage.get("cache_read_input_tokens", 0) or 0)
                 + int(usage.get("cache_creation_input_tokens", 0) or 0)
+                + int(usage.get("cached_input_tokens", 0) or 0)
+                + cached_detail
             )
             out_tok = int(usage.get("output_tokens", 0) or 0)
             step_idx = data.get("step_index")

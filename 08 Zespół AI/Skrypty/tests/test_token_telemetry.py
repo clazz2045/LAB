@@ -448,6 +448,50 @@ class TestCLIIntegration(unittest.TestCase):
 
         self.assertEqual(exit_code, 1)
 
+    def test_codex_rollout_telemetry_and_fallback(self) -> None:
+        from unittest.mock import patch
+        from lab_core.telemetry import _find_codex_transcripts, find_latest_transcript, parse_telemetry
+
+        base_tmp = Path(self.tmp_dir.name)
+        codex_sessions = base_tmp / ".codex" / "sessions" / "2026" / "11" / "17"
+        codex_sessions.mkdir(parents=True)
+        rollout = codex_sessions / "rollout-2026-11-17T12-00-00-abc.jsonl"
+        rollout.write_text(
+            "\n".join([
+                json.dumps({"type": "session_meta", "payload": {"id": "abc"}}),
+                json.dumps({
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "token_count",
+                        "info": {
+                            "last_token_usage": {
+                                "input_tokens": 12000,
+                                "cached_input_tokens": 8000,
+                                "output_tokens": 500,
+                            }
+                        },
+                    },
+                }),
+            ]),
+            encoding="utf-8",
+        )
+        self.assertEqual([p.resolve() for p in _find_codex_transcripts(base_tmp / ".codex" / "sessions")], [rollout.resolve()])
+        with patch("lab_core.telemetry.Path.home", return_value=base_tmp), patch.dict("os.environ", {}, clear=True):
+            found = find_latest_transcript()
+        self.assertEqual(found.resolve(), rollout.resolve())
+        metrics = parse_telemetry(rollout)
+        self.assertEqual(metrics.input_tokens, 12000)
+        self.assertEqual(metrics.cache_read_tokens, 8000)
+        self.assertEqual(metrics.output_tokens, 500)
+        self.assertEqual(metrics.total_context_tokens, 20000)
+
+        # Bezpieczny fallback gdy sesja Codex nie ma jeszcze metryk tokenów
+        empty_rollout = codex_sessions / "rollout-2026-11-17T12-05-00-empty.jsonl"
+        empty_rollout.write_text(json.dumps({"type": "session_meta", "payload": {"id": "empty"}}), encoding="utf-8")
+        fb = parse_telemetry(empty_rollout)
+        self.assertEqual(fb.total_context_tokens, 0)
+        self.assertEqual(fb.zone, "Komfortowa")
+
 
 if __name__ == "__main__":
     unittest.main()

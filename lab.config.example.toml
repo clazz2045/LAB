@@ -113,7 +113,7 @@ color = "#c678dd"
 [ai_team.llm]
 provider = "antigravity"
 model = "claude-sonnet-4-5"
-available_providers = ["antigravity", "claude"]
+available_providers = ["antigravity", "claude", "codex"]
 
 [ai_team.llm.providers.antigravity]
 engine = "antigravity-ide"
@@ -124,6 +124,10 @@ fast_model = "gemini-2.5-flash"
 engine = "anthropic-claude"
 default_model = "claude-sonnet-4-5"
 audit_model = "claude-opus-4-1"
+
+[ai_team.llm.providers.codex]
+engine = "openai-codex"
+default_model = "gpt-5.4"
 
 [ai_team.coordinator]
 role_key = "coordinator"

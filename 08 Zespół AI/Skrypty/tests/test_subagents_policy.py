@@ -422,30 +422,133 @@ class TestSessionDelegationDiscipline(unittest.TestCase):
         finally:
             shutil.rmtree(tmp)
 
-    def test_maks_code_without_ada_audit_causes_broken_and_clears_after_ada_audit(self):
+    def test_audit_gate_readonly_diagnostics_no_modified_files_ok(self):
         from check_quality import QualityChecker
         from lab_core.subagents import run_gate
 
         tmp, vault, _ = self._setup_session_vault()
         try:
+            self.assertEqual(run_gate(GOOD, "Maks", "engineering", vault_root=vault, enforce_binding=False), 0)
+            report = QualityChecker(vault_root=vault).check_all()
+            audit_errors = [
+                f for f in report.findings
+                if f.category == "audit_gate" and f.level == "error"
+            ]
+            self.assertEqual(audit_errors, [])
+            self.assertNotEqual(report.status, "broken")
+        finally:
+            shutil.rmtree(tmp)
+
+    def test_audit_gate_code_change_without_ada_causes_broken(self):
+        import os
+        from check_quality import QualityChecker
+        from lab_core.subagents import run_gate
+
+        tmp, vault, past_ts = self._setup_session_vault()
+        try:
+            script_file = vault / "08 Zespół AI" / "Skrypty" / "lab_core" / "sample_mod.py"
+            script_file.parent.mkdir(parents=True, exist_ok=True)
+            script_file.write_text("# sample\n", encoding="utf-8")
+            os.utime(script_file, (past_ts + 30.0, past_ts + 30.0))
+
+            self.assertEqual(run_gate(GOOD, "Kinga", "code", vault_root=vault, enforce_binding=False), 0)
+            report = QualityChecker(vault_root=vault).check_all()
+            self.assertEqual(report.status, "broken")
+            audit_errors = [
+                f for f in report.findings
+                if f.category == "audit_gate" and f.level == "error"
+            ]
+            self.assertEqual(len(audit_errors), 1, report.findings)
+        finally:
+            shutil.rmtree(tmp)
+
+    def test_audit_gate_code_change_with_ada_fail_causes_broken(self):
+        import os
+        from check_quality import QualityChecker
+        from lab_core.subagents import run_gate
+
+        tmp, vault, past_ts = self._setup_session_vault()
+        try:
+            cfg_file = vault / "lab.config.toml"
+            os.utime(cfg_file, (past_ts + 30.0, past_ts + 30.0))
+
+            self.assertEqual(run_gate(GOOD, "Maja", "engineering", vault_root=vault, enforce_binding=False), 0)
+            ada_fail = GOOD + "\nQuality Gate: FAIL\n"
+            self.assertEqual(run_gate(ada_fail, "Ada", "audit", vault_root=vault, enforce_binding=False), 0)
+
+            report = QualityChecker(vault_root=vault).check_all()
+            self.assertEqual(report.status, "broken")
+            audit_errors = [
+                f for f in report.findings
+                if f.category == "audit_gate" and f.level == "error"
+            ]
+            self.assertEqual(len(audit_errors), 1, report.findings)
+            self.assertIn("Quality Gate: FAIL", audit_errors[0].message)
+        finally:
+            shutil.rmtree(tmp)
+
+    def test_audit_gate_code_change_with_later_ada_pass_clears_broken(self):
+        import os
+        from check_quality import QualityChecker
+        from lab_core.subagents import run_gate
+
+        tmp, vault, past_ts = self._setup_session_vault()
+        try:
+            script_file = vault / "08 Zespół AI" / "Skrypty" / "lab_core" / "sample_mod.py"
+            script_file.parent.mkdir(parents=True, exist_ok=True)
+            script_file.write_text("# sample\n", encoding="utf-8")
+            os.utime(script_file, (past_ts + 30.0, past_ts + 30.0))
+
+            self.assertEqual(run_gate(GOOD, "Maks", "code", vault_root=vault, enforce_binding=False), 0)
+            ada_fail = GOOD + "\nQuality Gate: FAIL\n"
+            self.assertEqual(run_gate(ada_fail, "Ada", "audit", vault_root=vault, enforce_binding=False), 0)
+
+            report_fail = QualityChecker(vault_root=vault).check_all()
+            self.assertEqual(report_fail.status, "broken")
+
+            ada_pass = GOOD + "\nquality gate: pass\n"
+            self.assertEqual(run_gate(ada_pass, "Ada", "audit", vault_root=vault, enforce_binding=False), 0)
+
+            report_pass = QualityChecker(vault_root=vault).check_all()
+            audit_errors = [
+                f for f in report_pass.findings
+                if f.category == "audit_gate" and f.level == "error"
+            ]
+            self.assertEqual(audit_errors, [])
+            self.assertNotEqual(report_pass.status, "broken")
+        finally:
+            shutil.rmtree(tmp)
+
+    def test_audit_gate_long_ada_distillate_preserves_verdict_past_300_chars(self):
+        import os
+        from check_quality import QualityChecker
+        from lab_core.subagents import run_gate
+
+        tmp, vault, past_ts = self._setup_session_vault()
+        try:
+            script_file = vault / "08 Zespół AI" / "Skrypty" / "lab_core" / "sample_mod.py"
+            script_file.parent.mkdir(parents=True, exist_ok=True)
+            script_file.write_text("# sample\n", encoding="utf-8")
+            os.utime(script_file, (past_ts + 30.0, past_ts + 30.0))
+
             self.assertEqual(run_gate(GOOD, "Maks", "code", vault_root=vault, enforce_binding=False), 0)
 
-            report_before = QualityChecker(vault_root=vault).check_all()
-            self.assertEqual(report_before.status, "broken")
+            long_facts = "\n".join(f"- Zweryfikowano moduł nr {i} bez naruszeń." for i in range(15))
+            long_ada_pass = (
+                f"## Fakty\n{long_facts}\n"
+                "## Wnioski\n- Implementacja jest spójna z KISS i Zero-Pip.\n"
+                "## Rekomendacje\n- Quality Gate: PASS\n"
+            )
+            self.assertGreater(len(long_ada_pass), 500)
+            self.assertEqual(run_gate(long_ada_pass, "Ada", "audit", vault_root=vault, enforce_binding=False), 0)
+
+            report = QualityChecker(vault_root=vault).check_all()
             audit_errors = [
-                f for f in report_before.findings
-                if f.category == "subagents" and f.level == "error" and "Ada/audit" in f.message
+                f for f in report.findings
+                if f.category == "audit_gate" and f.level == "error"
             ]
-            self.assertEqual(len(audit_errors), 1, report_before.findings)
-
-            self.assertEqual(run_gate(GOOD, "Ada", "audit", vault_root=vault, enforce_binding=False), 0)
-
-            report_after = QualityChecker(vault_root=vault).check_all()
-            sub_errors_after = [
-                f for f in report_after.findings
-                if f.category == "subagents" and f.level == "error"
-            ]
-            self.assertEqual(sub_errors_after, [])
+            self.assertEqual(audit_errors, [])
+            self.assertNotEqual(report.status, "broken")
         finally:
             shutil.rmtree(tmp)
 
@@ -467,33 +570,6 @@ class TestSessionDelegationDiscipline(unittest.TestCase):
             SubagentsPolicyInspector().inspect(ctx)
             errors = [f for f in ctx.findings if f.level == "error"]
             self.assertEqual(errors, [])
-        finally:
-            shutil.rmtree(tmp)
-
-    def test_maks_code_without_ada_audit_causes_broken_and_clears_after_ada_audit(self):
-        from check_quality import QualityChecker
-        from lab_core.subagents import run_gate
-
-        tmp, vault, _ = self._setup_session_vault()
-        try:
-            self.assertEqual(run_gate(GOOD, "Maks", "code", vault_root=vault, enforce_binding=False), 0)
-
-            report_before = QualityChecker(vault_root=vault).check_all()
-            self.assertEqual(report_before.status, "broken")
-            audit_errors = [
-                f for f in report_before.findings
-                if f.category == "subagents" and f.level == "error" and "Ada/audit" in f.message
-            ]
-            self.assertEqual(len(audit_errors), 1, report_before.findings)
-
-            self.assertEqual(run_gate(GOOD, "Ada", "audit", vault_root=vault, enforce_binding=False), 0)
-
-            report_after = QualityChecker(vault_root=vault).check_all()
-            sub_errors_after = [
-                f for f in report_after.findings
-                if f.category == "subagents" and f.level == "error"
-            ]
-            self.assertEqual(sub_errors_after, [])
         finally:
             shutil.rmtree(tmp)
 

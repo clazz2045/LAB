@@ -386,7 +386,7 @@ icloud_guard = true
 [ai_team.llm]
 provider = "{e(llm_provider)}"
 model = "{e(llm_model)}"
-available_providers = ["antigravity", "claude"]
+available_providers = ["antigravity", "claude", "codex"]
 
 [ai_team.llm.providers.antigravity]
 engine = "antigravity-ide"
@@ -397,6 +397,10 @@ fast_model = "gemini-2.5-flash"
 engine = "anthropic-claude"
 default_model = "claude-sonnet-4-5"
 audit_model = "claude-opus-4-1"
+
+[ai_team.llm.providers.codex]
+engine = "openai-codex"
+default_model = "gpt-5.4"
 
 [ai_team.coordinator]
 role_key = "coordinator"
@@ -516,6 +520,21 @@ class LabEngineInstaller:
                 )
 
         target = self.options.target_dir
+        provider_norm = (self.options.llm_provider or "antigravity").strip().lower()
+
+        # 1A. Walidacja providera Codex CLI: wymuszenie dysku lokalnego (poza iCloud Drive)
+        if provider_norm == "codex" and (self.options.icloud_enabled or _is_icloud_path(target)):
+            return InstallResult(
+                success=False,
+                target_dir=target,
+                instance_name=self.options.instance_name,
+                elapsed_seconds=round(time.perf_counter() - start_time, 4),
+                preflight=preflight,
+                error_message=(
+                    "OpenAI Codex CLI wymaga katalogu lokalnego (poza iCloud Drive). "
+                    "Wybierz lokalną ścieżkę (np. ~/LAB lub ~/Documents) i zainstaluj ponownie."
+                ),
+            )
 
         # 1B. Bramki iCloud: blokada .git/.venv/node_modules oraz Optimize Mac Storage = OFF
         if self.options.icloud_enabled:
@@ -557,8 +576,17 @@ class LabEngineInstaller:
                     error_message=f"Bramka iCloud: {icloud_item.details} {icloud_item.remedy or ''}".strip(),
                 )
             if sys.platform == "darwin" and not self.options.confirm_icloud_optimize_off:
-                self.warnings.append(
-                    "iCloud (macOS): Upewnij się, że opcja 'Optimize Mac Storage' jest WYŁĄCZONA (OFF)."
+                return InstallResult(
+                    success=False,
+                    target_dir=target,
+                    instance_name=self.options.instance_name,
+                    elapsed_seconds=round(time.perf_counter() - start_time, 4),
+                    preflight=preflight,
+                    error_message=(
+                        "Bramka iCloud (macOS): Wymagane potwierdzenie wyłączenia 'Optimize Mac Storage' "
+                        "(confirm_icloud_optimize_off=True). Jeśli nie chcesz wyłączać optymalizacji iCloud "
+                        "dla całego Maca, wróć i wybierz katalog lokalny (np. ~/LAB)."
+                    ),
                 )
 
         target.mkdir(parents=True, exist_ok=True)
@@ -631,24 +659,65 @@ class LabEngineInstaller:
         if self.options.copy_engine:
             self._copy_engine_components(config_mgr)
 
-        # 8. Weryfikacja obecności .agents/hooks.json przy wyborze Antigravity
-        antigravity_ok = True
-        antigravity_msg = ""
-        if self.options.llm_provider.strip().lower() == "antigravity":
+        # 7B. Generowanie .codex/config.toml dla OpenAI Codex CLI
+        if provider_norm == "codex":
+            ai_room = config_mgr.get_room_by_role("governance-and-engine")
+            ai_room_path = ai_room.path if ai_room else "08 Zespół AI"
+            codex_cfg_path = target / ".codex" / "config.toml"
+            codex_cfg_path.parent.mkdir(parents=True, exist_ok=True)
+            if not codex_cfg_path.exists() or self.options.force:
+                if codex_cfg_path.exists():
+                    bak = _backup_if_exists(codex_cfg_path)
+                    if bak:
+                        self.created.append(f".codex/{bak.name}")
+                guard_rel = f"{ai_room_path}/Skrypty/lab_core/pre_tool_guard.py"
+                codex_toml = (
+                    "# Konfiguracja OpenAI Codex CLI dla instancji LAB 3.0\n"
+                    "# Standard: 100% Python stdlib, Zero-Pip\n\n"
+                    "[[hooks.PreToolUse]]\n"
+                    'matcher = ".*"\n'
+                    f'command = "python3 \\"{guard_rel}\\""\n'
+                    "timeout = 5\n"
+                )
+                tomllib.loads(codex_toml)
+                codex_cfg_path.write_text(codex_toml, encoding="utf-8")
+                self.created.append(".codex/config.toml")
+            else:
+                self.skipped.append(".codex/config.toml (istnieje)")
+
+        # 8. Weryfikacja konfiguracji hooków dostawcy LLM (Antigravity / Codex)
+        provider_ok = True
+        provider_msg = ""
+        if provider_norm == "antigravity":
             hooks_file = target / ".agents" / "hooks.json"
             if hooks_file.is_file():
                 try:
                     json.loads(hooks_file.read_text(encoding="utf-8"))
                 except Exception as exc:
-                    antigravity_ok = False
-                    antigravity_msg = f"Uszkodzony plik .agents/hooks.json dla Antigravity: {exc}"
+                    provider_ok = False
+                    provider_msg = f"Uszkodzony plik .agents/hooks.json dla Antigravity: {exc}"
             elif self.options.copy_engine:
-                antigravity_ok = False
-                antigravity_msg = "Brak wymaganego pliku .agents/hooks.json dla dostawcy Antigravity."
+                provider_ok = False
+                provider_msg = "Brak wymaganego pliku .agents/hooks.json dla dostawcy Antigravity."
             else:
                 self.warnings.append(
                     "Antigravity: brak pliku '.agents/hooks.json' (pominięto kopiowanie silnika)."
                 )
+        elif provider_norm == "codex":
+            codex_cfg_file = target / ".codex" / "config.toml"
+            if codex_cfg_file.is_file():
+                try:
+                    codex_data = tomllib.loads(codex_cfg_file.read_text(encoding="utf-8"))
+                    pre_hooks = codex_data.get("hooks", {}).get("PreToolUse", [])
+                    if not isinstance(pre_hooks, list) or not pre_hooks:
+                        provider_ok = False
+                        provider_msg = "Plik .codex/config.toml nie zawiera sekcji [[hooks.PreToolUse]]."
+                except Exception as exc:
+                    provider_ok = False
+                    provider_msg = f"Uszkodzony plik .codex/config.toml dla Codex CLI: {exc}"
+            else:
+                provider_ok = False
+                provider_msg = "Brak wymaganego pliku .codex/config.toml dla dostawcy Codex CLI."
 
         # 9. Post-Install Smoke Check
         smoke_ok = True
@@ -660,10 +729,10 @@ class LabEngineInstaller:
                 llm_provider=self.options.llm_provider,
             )
 
-        final_ok = bool(smoke_ok and antigravity_ok)
+        final_ok = bool(smoke_ok and provider_ok)
         err_msg: Optional[str] = None
-        if not antigravity_ok:
-            err_msg = antigravity_msg
+        if not provider_ok:
+            err_msg = provider_msg
         elif not smoke_ok:
             err_msg = "Post-Install Smoke Check nie powiódł się."
 
@@ -1123,35 +1192,64 @@ def run_post_install_smoke_check(
 ) -> Tuple[bool, List[str]]:
     """Automatyczny Post-Install Smoke Check (Specyfikacja Instalatora LAB 3.0).
 
-    1. Parsowanie wygenerowanego lab.config.toml (tomllib) oraz plików .json w .obsidian/.
-    2. Test zapisu/odczytu SQLite w trybie WAL w docelowej lokalizacji (spacje + UTF-8).
-    3. Wywołanie session_bootstrap.py --json (jeśli istnieje) i weryfikacja braku BROKEN.
+    1. Parsowanie lab.config.toml (tomllib), twarda weryfikacja pokoi i .obsidian/appearance.json.
+    2. Weryfikacja 07 Bazy Danych/lab_master.db oraz test zapisu/odczytu SQLite WAL (spacje + UTF-8).
+    3. Wywołanie session_bootstrap.py --json (twardy wymóg gdy check_bootstrap=True) i brak BROKEN.
+    4. Rozdzielona weryfikacja hooków dostawcy: .agents/hooks.json (antigravity) / .codex/config.toml (codex).
     """
     details: List[str] = []
     ok = True
 
-    # 1. TOML + JSON
+    # 1. TOML + pokoje + .obsidian/appearance.json
     cfg_path = target_dir / "lab.config.toml"
+    cfg_data: Dict[str, Any] = {}
     try:
-        tomllib.loads(cfg_path.read_text(encoding="utf-8"))
+        cfg_data = tomllib.loads(cfg_path.read_text(encoding="utf-8"))
         details.append("TOML: OK")
     except Exception as exc:
         details.append(f"TOML: FAIL ({exc})")
         ok = False
 
+    rooms_cfg = cfg_data.get("rooms", {}) if isinstance(cfg_data, dict) else {}
+    if isinstance(rooms_cfg, dict) and rooms_cfg:
+        missing_rooms: List[str] = []
+        for r_val in rooms_cfg.values():
+            r_path = r_val.get("path") if isinstance(r_val, dict) else None
+            if not r_path or not (target_dir / str(r_path)).is_dir():
+                missing_rooms.append(str(r_path or "?"))
+        if missing_rooms:
+            details.append(f"Pokoje ({len(rooms_cfg)}): FAIL (brak: {', '.join(missing_rooms)})")
+            ok = False
+        else:
+            details.append(f"Pokoje ({len(rooms_cfg)}): OK")
+    else:
+        details.append("Pokoje: FAIL (brak sekcji [rooms] w lab.config.toml)")
+        ok = False
+
     obs_dir = target_dir / ".obsidian"
-    if obs_dir.is_dir():
+    appearance_path = obs_dir / "appearance.json"
+    if not obs_dir.is_dir() or not appearance_path.is_file():
+        details.append("JSON (.obsidian/appearance.json): FAIL (brak pliku)")
+        ok = False
+    else:
+        obs_json_ok = True
         for jf in obs_dir.glob("*.json"):
             try:
                 json.loads(jf.read_text(encoding="utf-8"))
             except Exception as exc:
                 details.append(f"JSON ({jf.name}): FAIL ({exc})")
                 ok = False
-        details.append("JSON (.obsidian): OK")
+                obs_json_ok = False
+        if obs_json_ok:
+            details.append("JSON (.obsidian): OK")
 
-    # 2. SQLite WAL + UTF-8 test
+    # 2. Baza lab_master.db + test SQLite WAL + UTF-8
     db_dir = target_dir / "07 Bazy Danych"
-    if db_dir.is_dir():
+    master_db = db_dir / "lab_master.db"
+    if not db_dir.is_dir() or not master_db.is_file():
+        details.append("SQLite lab_master.db: FAIL (brak pliku)")
+        ok = False
+    else:
         smoke_db = db_dir / "_smoke_test.db"
         try:
             conn = sqlite3.connect(str(smoke_db))
@@ -1180,28 +1278,33 @@ def run_post_install_smoke_check(
 
     # 3. session_bootstrap.py --json
     bootstrap = target_dir / "08 Zespół AI" / "Skrypty" / "session_bootstrap.py"
-    if check_bootstrap and bootstrap.is_file():
-        try:
-            proc = subprocess.run(
-                [sys.executable, str(bootstrap), "--json"],
-                cwd=str(target_dir),
-                capture_output=True,
-                text=True,
-                timeout=15,
-            )
-            data = json.loads(proc.stdout) if proc.stdout.strip() else {}
-            status = data.get("status", "UNKNOWN")
-            if proc.returncode == 0 and status != "BROKEN":
-                details.append(f"session_bootstrap: OK ({status})")
-            else:
-                details.append(f"session_bootstrap: FAIL (status={status}, rc={proc.returncode})")
-                ok = False
-        except Exception as exc:
-            details.append(f"session_bootstrap: FAIL ({exc})")
+    if check_bootstrap:
+        if not bootstrap.is_file():
+            details.append("session_bootstrap: FAIL (brak pliku)")
             ok = False
+        else:
+            try:
+                proc = subprocess.run(
+                    [sys.executable, str(bootstrap), "--json"],
+                    cwd=str(target_dir),
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                )
+                data = json.loads(proc.stdout) if proc.stdout.strip() else {}
+                status = data.get("status", "UNKNOWN")
+                if proc.returncode == 0 and status != "BROKEN":
+                    details.append(f"session_bootstrap: OK ({status})")
+                else:
+                    details.append(f"session_bootstrap: FAIL (status={status}, rc={proc.returncode})")
+                    ok = False
+            except Exception as exc:
+                details.append(f"session_bootstrap: FAIL ({exc})")
+                ok = False
 
-    # 4. Antigravity hooks.json
-    if llm_provider.strip().lower() == "antigravity":
+    # 4. Rozdzielona weryfikacja hooków dostawcy LLM
+    provider_norm = llm_provider.strip().lower()
+    if provider_norm == "antigravity":
         hooks_path = target_dir / ".agents" / "hooks.json"
         if hooks_path.is_file():
             try:
@@ -1212,6 +1315,23 @@ def run_post_install_smoke_check(
                 ok = False
         elif check_bootstrap:
             details.append("Antigravity hooks.json: FAIL (brak pliku)")
+            ok = False
+    elif provider_norm == "codex":
+        codex_cfg_path = target_dir / ".codex" / "config.toml"
+        if codex_cfg_path.is_file():
+            try:
+                codex_data = tomllib.loads(codex_cfg_path.read_text(encoding="utf-8"))
+                pre_hooks = codex_data.get("hooks", {}).get("PreToolUse", [])
+                if isinstance(pre_hooks, list) and pre_hooks:
+                    details.append("Codex config.toml: OK")
+                else:
+                    details.append("Codex config.toml: FAIL (brak [[hooks.PreToolUse]])")
+                    ok = False
+            except Exception as exc:
+                details.append(f"Codex config.toml: FAIL ({exc})")
+                ok = False
+        else:
+            details.append("Codex config.toml: FAIL (brak pliku)")
             ok = False
 
     return ok, details
@@ -1239,6 +1359,7 @@ def install_lab_vault(
     llm_provider: str = "antigravity",
     llm_model: str = "auto",
     run_smoke_check: bool = True,
+    confirm_icloud_optimize_off: bool = False,
 ) -> InstallResult:
     """Wygodna funkcja powołania nowej instancji LAB 3.0."""
     options = InstallOptions(
@@ -1263,6 +1384,7 @@ def install_lab_vault(
         llm_provider=llm_provider,
         llm_model=llm_model,
         run_smoke_check=run_smoke_check,
+        confirm_icloud_optimize_off=confirm_icloud_optimize_off,
     )
     installer = LabEngineInstaller(options)
     return installer.run()

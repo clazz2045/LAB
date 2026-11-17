@@ -454,6 +454,34 @@ class TestHooksJsonConfig(unittest.TestCase):
         self.assertIn("pre_tool_guard.py", cmd)
         self.assertIn("../08 Zespół AI", cmd)
 
+    def test_codex_cli_pre_tool_use_adapter(self) -> None:
+        from lab_core.pre_tool_guard import evaluate_pre_tool
+
+        vault_root = Path(__file__).resolve().parents[3]
+        # Codex CLI Bash z niedozwolonym poleceniem -> deny
+        res_bad_cmd = evaluate_pre_tool({
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Bash",
+            "tool_input": {"command": "grep -rn secret ."},
+        }, vault_root=vault_root)
+        self.assertEqual(res_bad_cmd["decision"], "deny")
+
+        # Codex CLI shell z listą argumentów dla dozwolonego skryptu -> allow
+        res_ok_cmd = evaluate_pre_tool({
+            "hook_event_name": "PreToolUse",
+            "tool_name": "shell",
+            "tool_input": {"command": ["python3", "08 Zespół AI/Skrypty/checkpoint.py"]},
+        }, vault_root=vault_root)
+        self.assertEqual(res_ok_cmd["decision"], "allow")
+
+        # Codex CLI apply_patch na plik produkcyjny -> deny
+        res_bad_patch = evaluate_pre_tool({
+            "hook_event_name": "PreToolUse",
+            "tool_name": "apply_patch",
+            "tool_input": {"input": "*** Begin Patch\n*** Update File: 08 Zespół AI/Skrypty/lab_core/setup.py\n*** End Patch"},
+        }, vault_root=vault_root)
+        self.assertEqual(res_bad_patch["decision"], "deny")
+
 
 if __name__ == "__main__":
     unittest.main()

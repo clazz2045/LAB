@@ -349,6 +349,10 @@ def is_allowed_export_relpath(
     if top == ".agents":
         return len(parts) == 2 and parts[1] == "hooks.json"
 
+    # 2d. Hooki governance Codex CLI (.codex/config.toml)
+    if top == ".codex":
+        return len(parts) == 2 and parts[1] == "config.toml"
+
     # 3. Puste pokoje 01–07 (wyłącznie .gitkeep)
     rooms = empty_room_paths if empty_room_paths is not None else DEFAULT_ROOM_PATHS
     if top in rooms:
@@ -542,6 +546,16 @@ class GitSyncManager:
             if not dry_run:
                 hooks_dst.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(hooks_src, hooks_dst)
+
+        # 2c. Hooki governance Codex CLI (.codex/config.toml - bez sekretów/kluczy API)
+        codex_src = self.vault_root / ".codex" / "config.toml"
+        if codex_src.is_file():
+            codex_dst = self.target_dir / ".codex" / "config.toml"
+            synced.append((codex_src, codex_dst))
+            if not dry_run:
+                codex_dst.parent.mkdir(parents=True, exist_ok=True)
+                txt = sanitize_text_for_export(codex_src.read_text(encoding="utf-8"))
+                codex_dst.write_text(txt, encoding="utf-8")
 
         # 3. Puste pokoje 01–07 z .gitkeep
         for room_path in sorted(empty_rooms):

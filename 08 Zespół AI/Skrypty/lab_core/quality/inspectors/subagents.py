@@ -30,6 +30,9 @@ MIN_SOUL_BYTES = 50
 MASTER_DB_NAME = "lab_master.db"
 SESSION_LOGS_DIRNAME = "Dzienniki Sesji"
 CODE_OR_UI_EXTENSIONS: Set[str] = {".py", ".sql", ".swift", ".html", ".css"}
+AUDIT_GATE_EXTENSIONS: Set[str] = {".py", ".css", ".sh", ".command", ".bat"}
+QUALITY_GATE_PASS_RE = re.compile(r"quality\s+gate\s*:\s*pass\b", re.IGNORECASE)
+QUALITY_GATE_FAIL_RE = re.compile(r"quality\s+gate\s*:\s*fail\b", re.IGNORECASE)
 DOMAIN_A_AGENTS: Set[str] = {
     "maks",
     "kinga",
@@ -248,7 +251,8 @@ class SubagentsPolicyInspector(QualityInspector):
             if not row_tbl:
                 return
             dispatches = conn.execute(
-                "SELECT id, agent_name, task_type, status, dispatch_time FROM subagent_dispatches WHERE status = 'accepted' ORDER BY id ASC;"
+                "SELECT id, agent_name, task_type, status, dispatch_time, summary_excerpt, note "
+                "FROM subagent_dispatches WHERE status = 'accepted' ORDER BY id ASC;"
             ).fetchall()
         except sqlite3.Error:
             return
@@ -268,7 +272,14 @@ class SubagentsPolicyInspector(QualityInspector):
                 session_dispatches.append((ts_val if ts_val is not None else 0.0, int(row["id"]), row))
 
         session_dispatches.sort(key=lambda item: (item[0], item[1]))
-        self._check_maks_code_audit_sequence(ctx, [item[2] for item in session_dispatches], ai_room.id, db_path)
+        modified_code_config = self._find_modified_code_or_config(ctx, threshold_mtime)
+        self._check_maks_code_audit_sequence(
+            ctx,
+            [item[2] for item in session_dispatches],
+            modified_code_config,
+            ai_room.id,
+            db_path,
+        )
 
         modified_code_ui = self._find_modified_code_or_ui(ctx, threshold_mtime)
         modified_knowledge = self._find_modified_knowledge_or_research(ctx, threshold_mtime)
@@ -330,41 +341,161 @@ class SubagentsPolicyInspector(QualityInspector):
         self,
         ctx: QualityContext,
         session_dispatches: List[sqlite3.Row],
+        modified_code_config: List[str],
         room_id: str,
         db_path: Path,
     ) -> None:
-        """Weryfikuje bramkę sekwencyjną Maks/code -> Ada/audit (ACCEPTED) w bieżącej sesji."""
-        try:
-            maks_name = _nfc(ctx.config.get_agent_name("engineer").strip().lower())
-        except Exception:
-            maks_name = "maks"
+        """Weryfikuje deterministyczną bramkę audytu Ady (Wariant A) w bieżącej sesji.
+
+        Wymaga późniejszego (wyższe id) wpisu Ada/audit z 'Quality Gate: PASS',
+        gdy w bieżącej sesji istnieje wpis Maks/Kinga/Maja (lub task_type='engineering')
+        ORAZ wykryto zmodyfikowane pliki kodu/konfiguracji.
+        """
+        ctx.stats["session_modified_code_config"] = len(modified_code_config)
+        if not modified_code_config:
+            ctx.stats["pending_maks_code_audit"] = False
+            ctx.stats["pending_audit_gate"] = False
+            return
+
+        engineering_agents: Set[str] = {"maks", "kinga", "maja"}
+        for rk in ("engineer", "database_code", "designer"):
+            try:
+                engineering_agents.add(_nfc(ctx.config.get_agent_name(rk).strip().lower()))
+            except Exception:
+                pass
         try:
             ada_name = _nfc(ctx.config.get_agent_name("governance_qa").strip().lower())
         except Exception:
             ada_name = "ada"
 
-        pending_maks_code = False
+        last_eng_id = 0
+        last_ada_pass_id = 0
+        last_ada_fail_id = 0
+
         for row in session_dispatches:
+            row_id = int(row["id"])
             agent = _nfc(str(row["agent_name"] or "").strip().lower())
             task_type = str(row["task_type"] or "").strip().lower()
-            if agent == maks_name and task_type == "code":
-                pending_maks_code = True
-            elif agent == ada_name and task_type == "audit":
-                pending_maks_code = False
+            excerpt = str(row["summary_excerpt"] or "")
+            note = str(row["note"] or "")
+            audit_text = f"{note}\n{excerpt}"
 
-        ctx.stats["pending_maks_code_audit"] = pending_maks_code
-        if pending_maks_code:
+            if agent in engineering_agents or task_type == "engineering":
+                if row_id > last_eng_id:
+                    last_eng_id = row_id
+            elif agent == ada_name and task_type == "audit":
+                if QUALITY_GATE_PASS_RE.search(audit_text):
+                    if row_id > last_ada_pass_id:
+                        last_ada_pass_id = row_id
+                elif QUALITY_GATE_FAIL_RE.search(audit_text):
+                    if row_id > last_ada_fail_id:
+                        last_ada_fail_id = row_id
+
+        pending_audit = last_eng_id > 0 and last_ada_pass_id <= last_eng_id
+        ctx.stats["pending_maks_code_audit"] = pending_audit
+        ctx.stats["pending_audit_gate"] = pending_audit
+
+        if pending_audit:
+            files_preview = ", ".join(modified_code_config[:5])
+            if last_ada_fail_id > last_eng_id:
+                msg = (
+                    f"Bramka audytu (Wariant A): Ostatni audyt Ady zwrócił 'Quality Gate: FAIL' "
+                    f"bez późniejszego 'Quality Gate: PASS' dla zmodyfikowanych plików ({files_preview})."
+                )
+            else:
+                msg = (
+                    f"Bramka audytu (Wariant A): Wykryto zmodyfikowane pliki kodu/konfiguracji ({files_preview}) "
+                    f"oraz wpis inżynierski w lab_master.db, ale brak późniejszego zaakceptowanego audytu "
+                    f"Ada/audit z 'Quality Gate: PASS'."
+                )
             ctx.add_finding(
                 level="error",
-                category="subagents",
+                category="audit_gate",
                 path=str(db_path.relative_to(ctx.vault_root)),
                 room=room_id,
-                message=(
-                    "Naruszenie Reguły 8 (Brak audytu po implementacji): W bieżącej sesji zarejestrowano wpis "
-                    "Maks/code w lab_master.db, ale brak późniejszego zatwierdzonego audytu Ada/audit "
-                    "(status ACCEPTED) przez subagent_gate.py."
-                ),
+                message=msg,
             )
+
+    def _find_modified_code_or_config(self, ctx: QualityContext, threshold_mtime: float) -> List[str]:
+        """Wykrywa zmodyfikowane w bieżącej sesji pliki kodu lub konfiguracji.
+
+        Obejmuje: 08 Zespół AI/Skrypty/**/*.py, lab.config*.toml, .css, .sh, .command, .bat.
+        """
+        modified: List[str] = []
+
+        def _is_target_file(fpath: Path, in_skrypty: bool = False) -> bool:
+            name = fpath.name
+            if name.startswith(".") or name in IGNORED_FILES:
+                return False
+            if name.startswith("lab.config") and name.endswith(".toml"):
+                return True
+            ext = fpath.suffix.lower()
+            if ext == ".py":
+                return in_skrypty
+            return ext in (AUDIT_GATE_EXTENSIONS - {".py"})
+
+        def _check_mtime(fpath: Path) -> None:
+            try:
+                if fpath.stat().st_mtime > threshold_mtime:
+                    modified.append(str(fpath.relative_to(ctx.vault_root)))
+            except OSError:
+                pass
+
+        # 1. Katalog główny skarbca (lab.config*.toml, .css, .sh, .command, .bat)
+        try:
+            for item in ctx.vault_root.iterdir():
+                if item.is_file() and _is_target_file(item, in_skrypty=False):
+                    _check_mtime(item)
+        except OSError:
+            pass
+
+        # 2. Pokój governance-and-engine (08 Zespół AI/Skrypty/**/*.py oraz .css/.sh/.command/.bat/lab.config*.toml)
+        try:
+            ai_room = ctx.config.get_room_by_role("governance-and-engine")
+            ai_dir = ctx.vault_root / ai_room.path
+        except ConfigError:
+            ai_dir = None
+
+        if ai_dir and ai_dir.is_dir():
+            skrypty_dir = ai_dir / "Skrypty"
+            for root_str, dirs, files in os.walk(ai_dir):
+                dirs[:] = [
+                    d for d in dirs
+                    if d not in IGNORED_DIRS and d != SESSION_LOGS_DIRNAME and not d.startswith(".")
+                ]
+                root_path = Path(root_str)
+                in_skrypty = root_path == skrypty_dir or skrypty_dir in root_path.parents
+                for fname in files:
+                    fpath = root_path / fname
+                    if _is_target_file(fpath, in_skrypty=in_skrypty):
+                        _check_mtime(fpath)
+
+        # 3. Produkty projektów (03 Projekty/.../Produkt/ dla .css, .sh, .command, .bat)
+        try:
+            proj_room = ctx.config.get_room_by_role("active-projects")
+            proj_dir = ctx.vault_root / proj_room.path
+        except ConfigError:
+            proj_dir = None
+
+        if proj_dir and proj_dir.is_dir():
+            for root_str, dirs, files in os.walk(proj_dir):
+                dirs[:] = [
+                    d for d in dirs
+                    if d not in (IGNORED_DIRS - {"_archiwum"}) and not d.startswith(".")
+                ]
+                root_path = Path(root_str)
+                try:
+                    rel_parts = root_path.relative_to(proj_dir).parts
+                except ValueError:
+                    continue
+                if "Produkt" not in rel_parts:
+                    continue
+                for fname in files:
+                    fpath = root_path / fname
+                    if _is_target_file(fpath, in_skrypty=False):
+                        _check_mtime(fpath)
+
+        return sorted(set(modified))
 
     def _find_modified_code_or_ui(self, ctx: QualityContext, threshold_mtime: float) -> List[str]:
         """Domena A (code_or_ui): *.py, *.sql, *.swift, *.html, *.css w Skrypty/, Bazy Danych/ lub Projekty/.../Produkt/."""

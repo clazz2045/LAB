@@ -105,6 +105,46 @@ class TestSetupWebWizard(unittest.TestCase):
         self.assertIn("ciemny: nord", html_out)
         self.assertIn("Inżynier: Borys", html_out)
 
+    def test_wizard_new_step_order_codex_and_icloud_hints(self) -> None:
+        html_out = _render_wizard_html()
+        self.assertIn("<h2>3. Środowisko AI – wybór programu</h2>", html_out)
+        self.assertIn('<option value="codex">OpenAI Codex CLI</option>', html_out)
+        self.assertIn("<h2>4. Lokalizacja sejfu</h2>", html_out)
+        self.assertIn('id="vaultPathPreviewCode"', html_out)
+        self.assertIn("<h2>5. Przechowywanie w iCloud Drive</h2>", html_out)
+        self.assertIn("<h2>6. Bramka iCloud: Optimize Mac Storage = OFF</h2>", html_out)
+        self.assertIn("Jeśli nie chcesz wyłączać optymalizacji iCloud dla całego Maca, wróć i wybierz katalog lokalny (np. ~/LAB).", html_out)
+        self.assertIn("«Zachowuj pobrane»", html_out)
+
+    def test_result_html_detects_fail_in_smoke_check(self) -> None:
+        res = InstallResult(
+            success=True,
+            target_dir=Path("/tmp/LAB-Test"),
+            instance_name="LAB",
+            elapsed_seconds=0.1,
+            smoke_check_passed=False,
+            smoke_check_details=["TOML: OK", "SQLite WAL + UTF-8: FAIL (błąd)", "session_bootstrap: FAIL (brak pliku)"],
+        )
+        html_out = _render_result_html(res)
+        self.assertIn("Konfiguracja: <strong>Błąd</strong>", html_out)
+        self.assertIn("Baza danych: <strong>Błąd</strong>", html_out)
+        self.assertIn("Środowisko: <strong>Błąd</strong>", html_out)
+
+    def test_build_options_for_codex_forces_icloud_false(self) -> None:
+        from lab_core.setup import _build_options_from_form
+
+        opts = _build_options_from_form({
+            "user_name": ["Jan"],
+            "instance_name": ["CodexVault"],
+            "location_preset": ["__custom__"],
+            "custom_location": ["/tmp"],
+            "icloud_enabled": ["yes"],
+            "llm_provider": ["codex"],
+        })
+        self.assertEqual(opts.llm_provider, "codex")
+        self.assertFalse(opts.icloud_enabled)
+        self.assertEqual(opts.llm_model, "gpt-5.4")
+
 
 if __name__ == "__main__":
     unittest.main()

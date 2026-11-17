@@ -1,15 +1,13 @@
 {
-  "attachmentFolderPath": "01 Skrzynka",
+  "attachmentFolderPath": "06 Zasoby/Obrazy",
   "alwaysUpdateLinks": true,
   "newLinkFormat": "shortest",
   "useMarkdownLinks": false,
   "newFileLocation": "folder",
-  "newFileFolderPath": "01 Skrzynka",
+  "newFileFolderPath": "02 Warsztat/Brudnopis",
   "uriCallbacks": true,
   "showUnsupportedFiles": true,
   "userIgnoreFilters": [
-    "/^(?!AGENTS\\.md$)(?!0[1-8] )[^/]+$/",
-    "08 Zespół AI",
     "__pycache__",
     ".pytest_cache",
     ".DS_Store"

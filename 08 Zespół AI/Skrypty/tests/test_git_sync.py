@@ -179,6 +179,26 @@ class TestGitSyncAndQG2(unittest.TestCase):
         self.assertEqual(actual_ai_subdirs, {"Governance", "Dzienniki Sesji"})
         self.assertEqual(mgr.run_qg2_scan(), [])
 
+    def test_qg2_whitelist_includes_codex_config_toml(self) -> None:
+        from lab_core.git import is_allowed_export_relpath
+
+        self.assertTrue(is_allowed_export_relpath(Path(".codex/config.toml")))
+        self.assertFalse(is_allowed_export_relpath(Path(".codex/auth.json")))
+
+        src_vault = Path(self.tmp.name) / "SrcCodex"
+        (src_vault / ".codex").mkdir(parents=True)
+        (src_vault / ".codex" / "config.toml").write_text(
+            '[[hooks.PreToolUse]]\nmatcher = ".*"\ncommand = "python3 \\"08 Zespół AI/Skrypty/lab_core/pre_tool_guard.py\\""\n',
+            encoding="utf-8",
+        )
+        shutil.copy2(_root_dir / "lab.config.example.toml", src_vault / "lab.config.toml")
+
+        out_dir = Path(self.tmp.name) / "OutCodex"
+        mgr = GitSyncManager(vault_root=src_vault, target_dir=out_dir)
+        mgr.sync_files(dry_run=False)
+        self.assertTrue((out_dir / ".codex" / "config.toml").is_file())
+        self.assertEqual(mgr.run_qg2_scan(), [])
+
 
 if __name__ == "__main__":
     unittest.main()

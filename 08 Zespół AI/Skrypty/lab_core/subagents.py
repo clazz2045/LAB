@@ -267,10 +267,16 @@ def run_gate(
 
     status = "accepted" if ok else "rejected"
     excerpt = text.strip() if ok else "; ".join(problems_list)
+    dispatch_note: Optional[str] = None
+    if ok:
+        verdicts = re.findall(r"quality\s+gate\s*:\s*(pass|fail)\b", text, re.IGNORECASE)
+        if verdicts:
+            dispatch_note = f"Quality Gate: {verdicts[-1].upper()}"
     row_id = log_subagent_dispatch(
         db_path, agent_name, task_type, status, tokens_used, excerpt,
         subagent_id=subagent_id if enforce_binding else None,
         content_sha256=actual_sha if enforce_binding else None,
+        note=dispatch_note,
     )
 
     print(f"[subagent_gate] {agent_name}/{task_type}: {status.upper()} (~{estimate_tokens(text)} tok, wpis #{row_id})")

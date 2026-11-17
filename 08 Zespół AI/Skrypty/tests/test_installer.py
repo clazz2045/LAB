@@ -306,6 +306,7 @@ class TestSetupLabCli(unittest.TestCase):
             "--icloud",
             "--llm-provider", "claude",
             "--llm-model", "claude-sonnet-4-5",
+            "--confirm-icloud-optimize-off",
             "--non-interactive",
             "--skip-preflight",
         ]
@@ -361,7 +362,8 @@ class TestSetupLabCli(unittest.TestCase):
         self.assertNotIn("3.0", html_out)
         self.assertIn("function isIcloudEnabled()", html_out)
         self.assertIn("function getVisibleSteps()", html_out)
-        self.assertIn("if (i === 5 && skipIcloud) continue;", html_out)
+        self.assertIn("if (codex && (i === 5 || i === 6)) continue;", html_out)
+        self.assertIn("if (i === 6 && skipIcloudConfirm) continue;", html_out)
         self.assertIn('"Krok " + idx + " z " + visibleTotal', html_out)
 
         self.assertNotIn("Antigravity (wymaga .agents/hooks.json)", html_out)
@@ -495,6 +497,112 @@ class TestConfigPortability(unittest.TestCase):
             self.assertIn("LAB-Installer.bat", txt)
             self.assertIn("Obsidian", txt)
             self.assertIn("Gatekeeper", txt)
+
+    def test_codex_provider_generates_config_toml_and_passes_smoke_check(self):
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td) / "CodexTarget"
+            res = LabEngineInstaller(
+                InstallOptions(
+                    target_dir=target,
+                    instance_name="CODEX_LAB",
+                    user_name="Jan",
+                    llm_provider="codex",
+                    llm_model="gpt-5.4",
+                    skip_preflight=True,
+                    copy_engine=False,
+                    icloud_enabled=False,
+                )
+            ).run()
+            self.assertTrue(res.success, f"Błąd instalacji codex: {res.error_message} / {res.smoke_check_details}")
+            codex_cfg = target / ".codex" / "config.toml"
+            self.assertTrue(codex_cfg.is_file())
+            self.assertFalse((target / ".agents" / "hooks.json").exists())
+            txt = codex_cfg.read_text(encoding="utf-8")
+            self.assertIn("[[hooks.PreToolUse]]", txt)
+            self.assertIn("pre_tool_guard.py", txt)
+            self.assertIn("Codex config.toml: OK", res.smoke_check_details)
+            lab_cfg = (target / "lab.config.toml").read_text(encoding="utf-8")
+            self.assertIn('provider = "codex"', lab_cfg)
+            self.assertIn('available_providers = ["antigravity", "claude", "codex"]', lab_cfg)
+
+    def test_codex_rejects_icloud_path_and_icloud_flag(self):
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td) / "CodexTarget"
+            res_flag = LabEngineInstaller(
+                InstallOptions(
+                    target_dir=target,
+                    llm_provider="codex",
+                    icloud_enabled=True,
+                    confirm_icloud_optimize_off=True,
+                    skip_preflight=True,
+                    copy_engine=False,
+                )
+            ).run()
+            self.assertFalse(res_flag.success)
+            self.assertIn("iCloud", res_flag.error_message or "")
+
+            icloud_path = Path(td) / "Library" / "Mobile Documents" / "iCloud~md~obsidian" / "Documents" / "CODEX"
+            res_path = LabEngineInstaller(
+                InstallOptions(
+                    target_dir=icloud_path,
+                    llm_provider="codex",
+                    icloud_enabled=False,
+                    skip_preflight=True,
+                    copy_engine=False,
+                )
+            ).run()
+            self.assertFalse(res_path.success)
+            self.assertIn("iCloud", res_path.error_message or "")
+
+    def test_icloud_requires_confirm_optimize_off_on_macos(self):
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td) / "IcloudTarget"
+            res = LabEngineInstaller(
+                InstallOptions(
+                    target_dir=target,
+                    icloud_enabled=True,
+                    confirm_icloud_optimize_off=False,
+                    skip_preflight=True,
+                    copy_engine=False,
+                )
+            ).run()
+            if sys.platform == "darwin":
+                self.assertFalse(res.success)
+                self.assertIn("Optimize Mac Storage", res.error_message or "")
+            else:
+                self.assertTrue(res.success)
+
+    def test_smoke_check_hard_assertions(self):
+        from lab_core.installer import run_post_install_smoke_check
+
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td) / "SmokeTarget"
+            res = LabEngineInstaller(
+                InstallOptions(
+                    target_dir=target,
+                    llm_provider="codex",
+                    skip_preflight=True,
+                    copy_engine=False,
+                )
+            ).run()
+            self.assertTrue(res.success)
+
+            # Usuń .obsidian/appearance.json -> Smoke Check musi zwrócić FAIL
+            (target / ".obsidian" / "appearance.json").unlink()
+            ok1, det1 = run_post_install_smoke_check(target, check_bootstrap=False, llm_provider="codex")
+            self.assertFalse(ok1)
+            self.assertTrue(any("appearance.json" in d and "FAIL" in d for d in det1))
+
+            # Usuń .codex/config.toml -> Smoke Check musi zwrócić FAIL dla codex
+            (target / ".codex" / "config.toml").unlink()
+            ok2, det2 = run_post_install_smoke_check(target, check_bootstrap=False, llm_provider="codex")
+            self.assertFalse(ok2)
+            self.assertTrue(any("Codex config.toml: FAIL" in d for d in det2))
+
+            # Brak session_bootstrap.py przy check_bootstrap=True -> FAIL
+            ok3, det3 = run_post_install_smoke_check(target, check_bootstrap=True, llm_provider="claude")
+            self.assertFalse(ok3)
+            self.assertTrue(any("session_bootstrap: FAIL" in d for d in det3))
 
 
 if __name__ == "__main__":

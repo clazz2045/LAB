@@ -60,11 +60,20 @@ WRITE_TOOLS = frozenset({
     "multi_replace_file_content",
     "create_file",
     "delete_file",
+    "apply_patch",
+    "patch_file",
+    "write",
+    "edit",
 })
 
 SHELL_TOOLS = frozenset({
     "run_command",
     "execute_command",
+    "bash",
+    "shell",
+    "shell_command",
+    "exec_command",
+    "local_shell",
 })
 
 SUBAGENT_TOOLS = frozenset({
@@ -403,26 +412,62 @@ def is_allowed_coordinator_subagent(tool_args: Dict[str, Any]) -> Tuple[bool, Op
     return True, None
 
 
+def _coerce_args_dict(args_val: Any) -> Dict[str, Any]:
+    """Konwertuje argumenty narzędzia (dict lub string JSON z Codex CLI) na słownik."""
+    if isinstance(args_val, dict):
+        return args_val
+    if isinstance(args_val, str):
+        raw = args_val.strip()
+        if raw.startswith("{"):
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, dict):
+                    return parsed
+            except json.JSONDecodeError:
+                pass
+        return {"input": args_val}
+    return {}
+
+
+def _extract_patch_paths(patch_text: str) -> List[str]:
+    """Wyodrębnia ścieżki plików z formatu apply_patch (Codex CLI) lub unified diff."""
+    paths: List[str] = []
+    for line in patch_text.splitlines():
+        s = line.strip()
+        for prefix in ("*** Update File: ", "*** Add File: ", "*** Delete File: ", "*** Move to: "):
+            if s.startswith(prefix):
+                p = s[len(prefix):].strip()
+                if p:
+                    paths.append(p)
+        if s.startswith("+++ b/"):
+            p = s[6:].strip()
+            if p:
+                paths.append(p)
+    return paths
+
+
 def extract_event_data(payload: Dict[str, Any]) -> Tuple[str, Dict[str, Any], Optional[str]]:
-    """Wyodrębnia nazwę narzędzia, argumenty oraz ścieżkę transkryptu z wejścia."""
+    """Wyodrębnia nazwę narzędzia, argumenty oraz ścieżkę transkryptu z wejścia (Antigravity / Claude / Codex CLI)."""
     tool_name = ""
     tool_args: Dict[str, Any] = {}
 
     if "toolCall" in payload and isinstance(payload["toolCall"], dict):
         tc = payload["toolCall"]
         tool_name = str(tc.get("name") or "")
-        args_val = tc.get("args") or {}
-        tool_args = args_val if isinstance(args_val, dict) else {}
+        tool_args = _coerce_args_dict(tc.get("args"))
     elif "tool_name" in payload:
         tool_name = str(payload.get("tool_name") or "")
-        args_val = payload.get("tool_input") or payload.get("tool_args") or {}
-        tool_args = args_val if isinstance(args_val, dict) else {}
+        raw_args = payload.get("tool_input") if payload.get("tool_input") is not None else payload.get("tool_args")
+        tool_args = _coerce_args_dict(raw_args)
     elif "name" in payload:
         tool_name = str(payload.get("name") or "")
-        args_val = payload.get("args") or {}
-        tool_args = args_val if isinstance(args_val, dict) else {}
+        tool_args = _coerce_args_dict(payload.get("args") or payload.get("input"))
 
-    transcript_path = payload.get("transcriptPath") or payload.get("transcript_path")
+    transcript_path = (
+        payload.get("transcriptPath")
+        or payload.get("transcript_path")
+        or payload.get("session_path")
+    )
     return tool_name, tool_args, transcript_path
 
 
@@ -460,18 +505,28 @@ def evaluate_pre_tool(payload: Dict[str, Any], vault_root: Optional[Path] = None
             or tool_args.get("FilePath")
             or ""
         )
-        if is_allowed_coordinator_write(raw_path, root):
+        if raw_path:
+            if is_allowed_coordinator_write(raw_path, root):
+                return {"decision": "allow"}
+            return {"decision": "deny", "reason": DENY_REASON_WRITE}
+        patch_text = str(tool_args.get("patch") or tool_args.get("input") or "")
+        patch_paths = _extract_patch_paths(patch_text) if patch_text else []
+        if patch_paths and all(is_allowed_coordinator_write(p, root) for p in patch_paths):
             return {"decision": "allow"}
         return {"decision": "deny", "reason": DENY_REASON_WRITE}
 
     if tool_name_lower in SHELL_TOOLS:
-        cmd_str = str(
+        raw_cmd = (
             tool_args.get("CommandLine")
             or tool_args.get("command")
             or tool_args.get("command_line")
             or tool_args.get("cmd")
             or ""
         )
+        if isinstance(raw_cmd, list):
+            cmd_str = " ".join(str(x) for x in raw_cmd)
+        else:
+            cmd_str = str(raw_cmd)
         allowed, reason = is_allowed_coordinator_command(cmd_str)
         if allowed:
             return {"decision": "allow"}

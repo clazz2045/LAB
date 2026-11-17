@@ -154,26 +154,45 @@ def _render_wizard_html() -> str:
     <div class="step" data-step="2">
       <h2>2. Nazwa sejfu</h2>
       <label>Nazwa katalogu głównego
-        <input type="text" name="instance_name" id="f_instance_name" value="LAB" required>
+        <input type="text" name="instance_name" id="f_instance_name" value="LAB" oninput="updatePathPreview()" required>
       </label>
       <p class="comment">Komentarz: Określa nazwę instancji oraz nazwę głównego folderu Obsidiana (domyślnie <code>LAB</code>).</p>
     </div>
 
     <div class="step" data-step="3">
-      <h2>3. Lokalizacja sejfu</h2>
+      <h2>3. Środowisko AI – wybór programu</h2>
+      <label>Środowisko AI
+        <select name="llm_provider" id="f_llm_provider" onchange="onProviderChange()">
+          <option value="antigravity" selected>Antigravity</option>
+          <option value="claude">Claude</option>
+          <option value="codex">OpenAI Codex CLI</option>
+        </select>
+      </label>
+      <div id="codexProviderInfo" class="warn" style="display:none;">
+        OpenAI Codex CLI wymaga katalogu lokalnego (poza iCloud Drive). Opcje iCloud zostaną automatycznie pominięte.
+      </div>
+      <p class="comment">Komentarz: Wybierz środowisko AI, w którym pracujesz. Instalator automatycznie skonfiguruje wszystkie potrzebne ustawienia w tle.</p>
+    </div>
+
+    <div class="step" data-step="4">
+      <h2>4. Lokalizacja sejfu</h2>
       <label>Katalog nadrzędny
         <select name="location_preset" id="locSelect" onchange="toggleCustomLoc(this.value)">
           {loc_options}
         </select>
       </label>
       <label id="customLocWrap" style="display:none;">Własna ścieżka nadrzędna
-        <input type="text" name="custom_location" id="f_custom_location" value="{html.escape(default_loc)}" oninput="toggleIcloudWarn()">
+        <input type="text" name="custom_location" id="f_custom_location" value="{html.escape(default_loc)}" oninput="onLocationInput()">
       </label>
+      <div class="box" id="vaultPathPreview">Pełna ścieżka wynikowa: <code id="vaultPathPreviewCode"></code></div>
+      <div id="codexLocErr" class="warn" style="display:none;">
+        OpenAI Codex CLI wymaga katalogu lokalnego — ścieżki iCloud Drive są zablokowane. Wybierz katalog lokalny (np. ~/LAB lub ~/Documents).
+      </div>
       <p class="comment">Komentarz: Wybierz folder, w którym powstanie sejf. Wykryte lokalizacje iCloud i <code>~/Documents</code> są na górze listy.</p>
     </div>
 
-    <div class="step" data-step="4">
-      <h2>4. Przechowywanie w iCloud Drive</h2>
+    <div class="step" data-step="5">
+      <h2>5. Przechowywanie w iCloud Drive</h2>
       <label>Czy sejf będzie w iCloud Drive?
         <select name="icloud_enabled" id="icloudSelect" onchange="toggleIcloudWarn()">
           <option value="auto" selected>Autodetekcja ze ścieżki</option>
@@ -184,18 +203,22 @@ def _render_wizard_html() -> str:
       <p class="comment">Komentarz: Włączenie iCloud automatycznie zabezpieczy sejf przed konfliktami synchronizacji (blokada <code>.git</code>, <code>.venv/</code> i <code>node_modules/</code> w chmurze).</p>
     </div>
 
-    <div class="step" data-step="5">
-      <h2>5. Bramka iCloud: Optimize Mac Storage = OFF</h2>
+    <div class="step" data-step="6">
+      <h2>6. Bramka iCloud: Optimize Mac Storage = OFF</h2>
       <div class="box">{icloud_diag_msg}</div>
       <label class="chk">
-        <input type="checkbox" name="confirm_icloud_optimize_off" id="f_confirm_icloud" value="yes">
-        <span>Potwierdzam, że opcja <strong>Optymalizuj pamięć Maca (Optimize Mac Storage)</strong> w ustawieniach iCloud jest <strong>WYŁĄCZONA (OFF)</strong> (lub sejf jest lokalny).</span>
+        <input type="checkbox" name="confirm_icloud_optimize_off" id="f_confirm_icloud" value="yes" onchange="validateCurrentStep()">
+        <span>Potwierdzam, że opcja <strong>Optymalizuj pamięć Maca (Optimize Mac Storage)</strong> w ustawieniach iCloud jest <strong>WYŁĄCZONA (OFF)</strong> lub folder sejfu ma ustawione <strong>«Zachowuj pobrane»</strong> (macOS 15+).</span>
       </label>
+      <p class="comment">Jeśli nie chcesz wyłączać optymalizacji iCloud dla całego Maca, wróć i wybierz katalog lokalny (np. ~/LAB). Na macOS 15+ możesz też kliknąć PPM na folderze sejfu w Finderze i wybrać «Zachowuj pobrane» (⬇️) — wtedy również możesz zaznaczyć ten checkbox.</p>
+      <div id="icloudConfirmErr" class="warn" style="display:none;">
+        Wymagane zaznaczenie potwierdzenia wyłączenia „Optimize Mac Storage” dla sejfu w iCloud Drive.
+      </div>
       <p class="comment">Komentarz: Przy włączonej optymalizacji macOS usuwa pliki lokalnie i zostawia placeholdery <code>.icloud</code>, co uszkadza odczyt SQLite i skryptów Pythona.</p>
     </div>
 
-    <div class="step" data-step="6">
-      <h2>6. GitHub i kontrola wersji</h2>
+    <div class="step" data-step="7">
+      <h2>7. GitHub i kontrola wersji</h2>
       <label>Czy używasz GitHuba do wersjonowania sejfu?
         <select name="github_enabled" id="githubSelect" onchange="toggleIcloudWarn()">
           <option value="no" selected>Nie</option>
@@ -208,8 +231,8 @@ def _render_wizard_html() -> str:
       <p class="comment">Komentarz: Poza iCloud generuje sekcję <code>[vcs]</code> oraz <code>.gitignore</code> chroniący bazy <code>.db</code> i pliki tymczasowe.</p>
     </div>
 
-    <div class="step" data-step="7">
-      <h2>7. Moduł: Pokój 03 Projekty</h2>
+    <div class="step" data-step="8">
+      <h2>8. Moduł: Pokój 03 Projekty</h2>
       <label>Aktywować pokój projektowy?
         <select name="enable_projects" id="f_enable_projects">
           <option value="yes" selected>Włączony (zalecane)</option>
@@ -219,8 +242,8 @@ def _render_wizard_html() -> str:
       <p class="comment">Komentarz: Pokój <code>03 Projekty</code> służy do prowadzenia zamkniętych inicjatyw z własnymi kapsułami i raportami postępu.</p>
     </div>
 
-    <div class="step" data-step="8">
-      <h2>8. Moduł: Pokój 04 Operacje</h2>
+    <div class="step" data-step="9">
+      <h2>9. Moduł: Pokój 04 Operacje</h2>
       <label>Aktywować pokój operacyjny?
         <select name="enable_operations" id="f_enable_operations">
           <option value="yes" selected>Włączony (zalecane)</option>
@@ -230,8 +253,8 @@ def _render_wizard_html() -> str:
       <p class="comment">Komentarz: Pokój <code>04 Operacje</code> utrzymuje ciągłe rutyny, procedury SOP i odpowiedzialności cykliczne.</p>
     </div>
 
-    <div class="step" data-step="9">
-      <h2>9. Nazwy 7 agentów Zespołu AI</h2>
+    <div class="step" data-step="10">
+      <h2>10. Nazwy 7 agentów Zespołu AI</h2>
       <div class="grid2">
         <label>Koordynator <input type="text" name="agent_coordinator" value="{DEFAULT_AGENT_NAMES['coordinator']}"></label>
         <label>Audytor <input type="text" name="agent_auditor" value="{DEFAULT_AGENT_NAMES['auditor']}"></label>
@@ -242,17 +265,6 @@ def _render_wizard_html() -> str:
         <label>Specjalista Syntezy <input type="text" name="agent_knowledge" value="{DEFAULT_AGENT_NAMES['knowledge']}"></label>
       </div>
       <p class="comment">Komentarz: Personalizacja nazw automatycznie mapuje foldery w <code>08 Zespół AI/Role/</code> oraz wpisy w <code>AGENTS.md</code>.</p>
-    </div>
-
-    <div class="step" data-step="10">
-      <h2>10. Środowisko AI – wybór programu</h2>
-      <label>Środowisko AI
-        <select name="llm_provider" id="f_llm_provider">
-          <option value="antigravity" selected>Antigravity</option>
-          <option value="claude">Claude</option>
-        </select>
-      </label>
-      <p class="comment">Komentarz: Wybierz środowisko AI, w którym pracujesz. Instalator automatycznie skonfiguruje wszystkie potrzebne ustawienia w tle.</p>
     </div>
 
     <div class="step" data-step="11">
@@ -291,23 +303,105 @@ def _render_wizard_html() -> str:
 var currentStep = 1;
 var totalSteps = 12;
 
+function _isIcloudPathStr(loc) {{
+  var s = String(loc || "");
+  return s.indexOf("Mobile Documents") !== -1 || s.indexOf("com~apple~CloudDocs") !== -1 || s.indexOf("iCloud~md~obsidian") !== -1;
+}}
+
+function isCodexProvider() {{
+  var el = document.getElementById("f_llm_provider");
+  return el && el.value === "codex";
+}}
+
+function _getSelectedParentDir() {{
+  var loc = document.getElementById("locSelect").value;
+  if (loc === "__custom__") loc = document.getElementById("f_custom_location").value || "";
+  return loc;
+}}
+
 function isIcloudEnabled() {{
+  if (isCodexProvider()) return false;
   var ic = document.getElementById("icloudSelect").value;
   if (ic === "yes") return true;
   if (ic === "no") return false;
-  var loc = document.getElementById("locSelect").value;
-  if (loc === "__custom__") loc = document.getElementById("f_custom_location").value || "";
-  return loc.indexOf("Mobile Documents") !== -1 || loc.indexOf("com~apple~CloudDocs") !== -1 || loc.indexOf("iCloud~md~obsidian") !== -1;
+  return _isIcloudPathStr(_getSelectedParentDir());
 }}
 
 function getVisibleSteps() {{
   var list = [];
-  var skipIcloud = !isIcloudEnabled();
+  var codex = isCodexProvider();
+  var skipIcloudConfirm = !isIcloudEnabled();
   for (var i = 1; i <= totalSteps; i++) {{
-    if (i === 5 && skipIcloud) continue;
+    if (codex && (i === 5 || i === 6)) continue;
+    if (i === 6 && skipIcloudConfirm) continue;
     list.push(i);
   }}
   return list;
+}}
+
+function updatePathPreview() {{
+  var loc = _getSelectedParentDir();
+  var instName = document.getElementById("f_instance_name").value || "LAB";
+  var fullPath = (loc || "").replace(/[/]+$/, "") + "/" + instName;
+  var codeEl = document.getElementById("vaultPathPreviewCode");
+  if (codeEl) codeEl.textContent = fullPath;
+}}
+
+function validateCurrentStep() {{
+  var nextBtn = document.getElementById("nextBtn");
+  var codexErr = document.getElementById("codexLocErr");
+  var icloudErr = document.getElementById("icloudConfirmErr");
+  var valid = true;
+  if (codexErr) codexErr.style.display = "none";
+  if (icloudErr) icloudErr.style.display = "none";
+
+  if (currentStep === 4 && isCodexProvider() && _isIcloudPathStr(_getSelectedParentDir())) {{
+    if (codexErr) codexErr.style.display = "block";
+    valid = false;
+  }}
+  if (currentStep === 6 && isIcloudEnabled()) {{
+    var chk = document.getElementById("f_confirm_icloud");
+    if (chk && !chk.checked) {{
+      if (icloudErr) icloudErr.style.display = "block";
+      valid = false;
+    }}
+  }}
+  if (nextBtn) nextBtn.disabled = !valid;
+  return valid;
+}}
+
+function onProviderChange() {{
+  var codex = isCodexProvider();
+  var info = document.getElementById("codexProviderInfo");
+  if (info) info.style.display = codex ? "block" : "none";
+  var locSel = document.getElementById("locSelect");
+  if (locSel) {{
+    var firstLocalVal = "";
+    for (var i = 0; i < locSel.options.length; i++) {{
+      var opt = locSel.options[i];
+      var isIc = _isIcloudPathStr(opt.value);
+      opt.disabled = codex && isIc;
+      opt.hidden = codex && isIc;
+      if (!isIc && opt.value !== "__custom__" && !firstLocalVal) {{
+        firstLocalVal = opt.value;
+      }}
+    }}
+    if (codex && _isIcloudPathStr(locSel.value)) {{
+      locSel.value = firstLocalVal || "__custom__";
+      toggleCustomLoc(locSel.value);
+    }}
+  }}
+  var icSel = document.getElementById("icloudSelect");
+  if (codex && icSel) {{
+    icSel.value = "no";
+  }}
+  updatePathPreview();
+  showStep(currentStep);
+}}
+
+function onLocationInput() {{
+  updatePathPreview();
+  toggleIcloudWarn();
 }}
 
 function showStep(n) {{
@@ -329,12 +423,15 @@ function showStep(n) {{
   document.getElementById("nextBtn").style.display = isLast ? "none" : "inline-block";
   submitBtn.style.display = isLast ? "inline-block" : "none";
   submitBtn.disabled = !isLast;
+  updatePathPreview();
+  validateCurrentStep();
   if (n === totalSteps) {{
     renderSummary();
   }}
 }}
 
 function changeStep(delta) {{
+  if (delta > 0 && !validateCurrentStep()) return;
   var visible = getVisibleSteps();
   var idx = visible.indexOf(currentStep);
   if (idx === -1) idx = 0;
@@ -387,6 +484,7 @@ function renderSummary() {{
 
 function toggleCustomLoc(val) {{
   document.getElementById("customLocWrap").style.display = (val === "__custom__") ? "block" : "none";
+  updatePathPreview();
   toggleIcloudWarn();
 }}
 
@@ -408,6 +506,10 @@ wizardForm.addEventListener("keydown", function(e) {{
 }});
 wizardForm.addEventListener("submit", function(e) {{
   if (currentStep < totalSteps) {{
+    e.preventDefault();
+    return false;
+  }}
+  if (isIcloudEnabled() && !document.getElementById("f_confirm_icloud").checked) {{
     e.preventDefault();
     return false;
   }}
@@ -485,9 +587,9 @@ def _render_result_html(result: InstallResult, options: Optional[InstallOptions]
     warnings_html = "".join(f'<div class="warn">{html.escape(w)}</div>' for w in result.warnings)
     err_html = f'<div class="warn">{html.escape(result.error_message)}</div>' if result.error_message else ""
     smoke_joined = " ".join(result.smoke_check_details)
-    cfg_status = "Błąd" if "BŁĄD" in smoke_joined or not result.success else "OK"
-    db_status = "Błąd" if ("SQLite" in smoke_joined and "BŁĄD" in smoke_joined) or not result.success else "OK"
-    env_status = "Błąd" if ("session_bootstrap" in smoke_joined and "BŁĄD" in smoke_joined) or not result.success else "OK"
+    cfg_status = "Błąd" if "FAIL" in smoke_joined or not result.success else "OK"
+    db_status = "Błąd" if ("SQLite" in smoke_joined and "FAIL" in smoke_joined) or not result.success else "OK"
+    env_status = "Błąd" if ("session_bootstrap" in smoke_joined and "FAIL" in smoke_joined) or not result.success else "OK"
 
     owner_name = options.user_name if options else "—"
     inst_name = options.instance_name if options else result.instance_name
@@ -707,8 +809,10 @@ def _build_options_from_form(form: Dict[str, List[str]]) -> InstallOptions:
     light_theme = _get("theme_preset_light", "dawn") or "dawn"
     theme_mode = _get("theme_mode", "system") or "system"
 
-    llm_provider = _get("llm_provider", "antigravity") or "antigravity"
-    default_llm_model = "auto" if llm_provider == "antigravity" else ""
+    llm_provider = (_get("llm_provider", "antigravity") or "antigravity").lower()
+    if llm_provider == "codex":
+        icloud_enabled = False
+    default_llm_model = "auto" if llm_provider == "antigravity" else ("gpt-5.4" if llm_provider == "codex" else "")
     llm_model = _get("llm_model", default_llm_model) or default_llm_model
 
     return InstallOptions(
@@ -884,8 +988,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--icloud", action="store_true", help="Deklaruj przechowywanie w iCloud")
     parser.add_argument("--no-projects", action="store_true", help="Wyłącz pokój 03 Projekty")
     parser.add_argument("--no-operations", action="store_true", help="Wyłącz pokój 04 Operacje")
-    parser.add_argument("--llm-provider", type=str, default="antigravity", help="Dostawca LLM (antigravity/claude)")
+    parser.add_argument("--llm-provider", type=str, default="antigravity", help="Dostawca LLM (antigravity/claude/codex)")
     parser.add_argument("--llm-model", type=str, default="auto", help="Identyfikator modelu LLM")
+    parser.add_argument("--confirm-icloud-optimize-off", action="store_true", help="Potwierdź wyłączenie Optimize Mac Storage na macOS przy instalacji w iCloud")
     parser.add_argument("--force", "-f", action="store_true", help="Nadpisz istniejące pliki (tworzy .bak)")
     parser.add_argument("--skip-preflight", action="store_true", help="Pomiń diagnostykę pre-flight")
     parser.add_argument("--diagnostics-only", action="store_true", help="Tylko diagnostyka środowiska")
@@ -932,6 +1037,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             enable_operations=not args.no_operations,
             llm_provider=args.llm_provider,
             llm_model=args.llm_model,
+            confirm_icloud_optimize_off=args.confirm_icloud_optimize_off,
         )
 
     print(f"\nInicjalizacja instancji '{options.instance_name}' (LAB {LAB_VERSION}) w: {options.target_dir}...")
