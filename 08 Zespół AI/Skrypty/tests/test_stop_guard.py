@@ -204,6 +204,8 @@ class TestStopGuard(unittest.TestCase):
             "Raport.\n\n*Telemetria: 🧠 110.0k / 1 000 000 (11.0%) 🟢*",
             "Raport.\n\n*Telemetria: 🧠 110.0k / 1000k (11.0%) 🟢*",
         ]
+        self.assertTrue(has_token_telemetry_signature("Raport.\n\n*Telemetria: 🧠 90k / 150k (60.0%) 🟢*"))
+        self.assertTrue(has_token_telemetry_signature("Raport.\n\n*Telemetria: 🧠 100k / 250k (40.0%) 🟢*"))
         for content in invalid_contents:
             self.assertFalse(has_token_telemetry_signature(content), f"Powinno odrzucić: {content}")
             steps = [

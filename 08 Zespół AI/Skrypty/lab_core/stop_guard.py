@@ -55,6 +55,7 @@ from lab_core.telemetry import (
     calculate_zone,
     format_statusline,
     format_tokens,
+    resolve_session_token_budget,
 )
 from lab_core.pre_tool_guard import is_subagent_session
 
@@ -87,7 +88,7 @@ PHANTOM_DELEGATION_PATTERNS = (
 CODE_BLOCK_PATTERN = re.compile(r"```(?:python|py|bash|sh|zsh)\s*\n(.*?)```", re.DOTALL | re.IGNORECASE)
 
 # Sztywny wzorzec obecności telemetrii tokenów w wypowiedzi Koordynatora (z lab_core.telemetry)
-STRICT_TELEMETRY_PATTERN = re.compile(r"🧠\s*\d+(?:\.\d+)?k?\s*/\s*250k\s*\(\d+(?:\.\d+)?%\)")
+STRICT_TELEMETRY_PATTERN = re.compile(r"🧠\s*\d+(?:\.\d+)?k?\s*/\s*(?:150|250)k\s*\(\d+(?:\.\d+)?%\)")
 TELEMETRY_PRESENCE_PATTERNS = (
     STRICT_TELEMETRY_PATTERN,
 )
@@ -101,8 +102,9 @@ def _log_error(msg: str) -> None:
         pass
 
 
-def extract_latest_token_metrics(transcript_path: Optional[str], limit: int = DEFAULT_WINDOW_LIMIT) -> Optional[TokenMetrics]:
+def extract_latest_token_metrics(transcript_path: Optional[str], limit: Optional[int] = None) -> Optional[TokenMetrics]:
     """Wyciąga najnowsze metryki tokenów z transkryptu sesji."""
+    effective_limit = int(limit) if limit is not None else resolve_session_token_budget()
     if not transcript_path:
         return None
     tp = Path(transcript_path).resolve()
@@ -140,15 +142,15 @@ def extract_latest_token_metrics(transcript_path: Optional[str], limit: int = DE
         return None
 
     total_context_tokens = input_tokens + cache_read_tokens
-    percentage = round((total_context_tokens / limit) * 100, 2) if limit > 0 else 0.0
-    zone, zone_icon, zone_display = calculate_zone(total_context_tokens, limit)
+    percentage = round((total_context_tokens / effective_limit) * 100, 2) if effective_limit > 0 else 0.0
+    zone, zone_icon, zone_display = calculate_zone(total_context_tokens, effective_limit)
 
     return TokenMetrics(
         input_tokens=input_tokens,
         cache_read_tokens=cache_read_tokens,
         output_tokens=output_tokens,
         total_context_tokens=total_context_tokens,
-        limit=limit,
+        limit=effective_limit,
         percentage=percentage,
         zone=zone,
         zone_icon=zone_icon,
@@ -260,9 +262,15 @@ def has_phantom_delegation(content: str) -> bool:
     return False
 
 
-def has_token_telemetry_signature(content: str) -> bool:
+def has_token_telemetry_signature(content: str, expected_limit: Optional[int] = None) -> bool:
     """Sprawdza obecność sygnatury telemetrii tokenów w treści."""
-    return any(pattern.search(content) for pattern in TELEMETRY_PRESENCE_PATTERNS)
+    if any(pattern.search(content) for pattern in TELEMETRY_PRESENCE_PATTERNS):
+        return True
+    if expected_limit is not None and expected_limit > 0:
+        limit_fmt = re.escape(format_tokens(expected_limit))
+        custom_pat = re.compile(rf"🧠\s*\d+(?:\.\d+)?k?\s*/\s*{limit_fmt}\s*\(\d+(?:\.\d+)?%\)")
+        return bool(custom_pat.search(content))
+    return False
 
 
 _CHECKPOINT_TEXT_RE = re.compile(
@@ -468,8 +476,12 @@ def evaluate_stop(payload: Dict[str, Any]) -> Dict[str, Any]:
     if termination_reason not in ("NO_TOOL_CALL", "TERMINAL_STEP_TYPE"):
         return {"decision": "allow"}
 
+    vault_root_raw = payload.get("vaultRoot")
+    v_root = Path(vault_root_raw).resolve() if vault_root_raw else None
+    budget = resolve_session_token_budget(v_root)
+
     # 3. Obliczenie i zapisanie telemetrii tokenów
-    metrics = extract_latest_token_metrics(transcript_path)
+    metrics = extract_latest_token_metrics(transcript_path, limit=budget)
     if metrics:
         save_telemetry_cache(metrics, artifact_dir)
         statusline = format_statusline(metrics)
@@ -521,10 +533,11 @@ def evaluate_stop(payload: Dict[str, Any]) -> Dict[str, Any]:
             return {"decision": "continue", "reason": reason}
 
     # 8. Wektor C: Obowiązkowa telemetria tokenów w stopce odpowiedzi Koordynatora (Reguła 6)
-    if not has_token_telemetry_signature(content):
+    if not has_token_telemetry_signature(content, expected_limit=budget):
+        limit_fmt = format_tokens(budget)
         reason = (
             f"LAB GOVERNANCE GUARD (Reguła 6 - Stop Hook): Brak lub niepoprawny format telemetrii tokenów "
-            f"w stopce wypowiedzi Koordynatora (wymagany wzorzec: `🧠 <X>k / 250k (<Y>%) <ikona>`). "
+            f"w stopce wypowiedzi Koordynatora (wymagany wzorzec: `🧠 <X>k / {limit_fmt} (<Y>%) <ikona>`). "
             f"Uzupełnij stopkę odpowiedzi o aktualny statusline z `lab_core.telemetry`:\n\n{statusline}"
         )
         return {"decision": "continue", "reason": reason}

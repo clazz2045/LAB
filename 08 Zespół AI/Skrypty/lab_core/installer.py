@@ -153,6 +153,7 @@ class InstallOptions:
     enable_operations: bool = True
     llm_provider: str = "antigravity"
     llm_model: str = "auto"
+    session_token_budget: Optional[int] = None
     run_smoke_check: bool = True
     confirm_icloud_optimize_off: bool = False
 
@@ -162,6 +163,8 @@ class InstallOptions:
             self.call_sign = self.user_name
         if self.icloud_enabled is None:
             self.icloud_enabled = _is_icloud_path(self.target_dir)
+        if self.session_token_budget is None:
+            self.session_token_budget = default_session_token_budget(self.llm_provider)
         merged = dict(DEFAULT_AGENT_NAMES)
         merged["coordinator"] = self.coordinator_name
         merged["auditor"] = self.governance_name
@@ -190,6 +193,11 @@ class InstallResult:
     smoke_check_details: List[str] = field(default_factory=list)
 
 
+def default_session_token_budget(llm_provider: str = "antigravity") -> int:
+    """Zwraca domyślny budżet tokenów sesji zależnie od wybranego środowiska AI."""
+    return 250_000 if (llm_provider or "").strip().lower() == "antigravity" else 150_000
+
+
 def generate_initial_config_toml(
     instance_name: str = "LAB",
     user_name: str = "Użytkownik",
@@ -208,11 +216,13 @@ def generate_initial_config_toml(
     icloud_enabled: bool = False,
     llm_provider: str = "antigravity",
     llm_model: str = "auto",
+    session_token_budget: Optional[int] = None,
 ) -> str:
     """Generuje kanoniczny plik konfiguracyjny lab.config.toml dla nowej instancji LAB 3.0."""
     names = dict(DEFAULT_AGENT_NAMES)
     names["coordinator"] = coordinator_name
     names["auditor"] = governance_name
+    budget = int(session_token_budget) if session_token_budget is not None else default_session_token_budget(llm_provider)
     if agent_names:
         for k, v in agent_names.items():
             if v and str(v).strip():
@@ -456,6 +466,11 @@ name = "{e(names['database_code'])}"
 contract_file = "08 Zespół AI/Role/Bazy Danych - {e(names['database_code'])}/AGENT.md"
 slug = "kinga"
 
+[telemetry]
+# Budżet higieniczny okna kontekstowego jednej sesji (w tokenach).
+# Domyślnie 150_000 (Claude Code / OpenAI Codex CLI); dla Antigravity z modelami wielko-oknowymi 250_000.
+session_token_budget = {budget}
+
 # ==============================================================================
 # SŁOWNIK PREZENTACJI I DESIGN SYSTEMU
 # ==============================================================================
@@ -622,6 +637,7 @@ class LabEngineInstaller:
                 icloud_enabled=bool(self.options.icloud_enabled),
                 llm_provider=self.options.llm_provider,
                 llm_model=self.options.llm_model,
+                session_token_budget=self.options.session_token_budget,
             )
             tomllib.loads(config_content)
             config_path.write_text(config_content, encoding="utf-8")

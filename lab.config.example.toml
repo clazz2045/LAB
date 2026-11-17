@@ -183,6 +183,12 @@ name = "Kinga"
 contract_file = "08 Zespół AI/Role/Bazy Danych - Kinga/AGENT.md"
 slug = "kinga"
 
+[telemetry]
+# Budżet higieniczny okna kontekstowego jednej sesji (w tokenach).
+# Domyślnie 150_000 (pod Claude Code i OpenAI Codex CLI);
+# dla Antigravity z modelami wielko-oknowymi (np. Gemini) opcjonalnie 250_000.
+session_token_budget = 150_000
+
 # ==============================================================================
 # SŁOWNIK PREZENTACJI I DESIGN SYSTEMU
 # ==============================================================================

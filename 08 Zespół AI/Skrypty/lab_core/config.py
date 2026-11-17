@@ -139,6 +139,12 @@ class AITeamConfig:
 
 
 @dataclass(frozen=True)
+class TelemetryConfig:
+    """Konfiguracja budżetu telemetrii okna kontekstowego sesji."""
+    session_token_budget: int = 150_000
+
+
+@dataclass(frozen=True)
 class PresentationConfig:
     """Konfiguracja wizualna i design tokeny."""
     theme_preset: str
@@ -218,6 +224,7 @@ class ConfigManager:
         self.external_storage: ExternalStorageConfig = ExternalStorageConfig()
         self.rooms: Dict[str, RoomConfig] = {}
         self.ai_team: AITeamConfig
+        self.telemetry: TelemetryConfig = TelemetryConfig()
         self.presentation: PresentationConfig
         self.human_thoughts_policy: HumanThoughtsPolicyConfig
         self.workshop_policy: WorkshopPolicyConfig
@@ -255,6 +262,7 @@ class ConfigManager:
         self._parse_storage()
         self._parse_rooms()
         self._parse_ai_team()
+        self._parse_telemetry()
         self._parse_presentation()
         self._parse_policies()
 
@@ -426,6 +434,17 @@ class ConfigManager:
             specialists=specialists,
             distillate=distillate_cfg,
         )
+
+    def _parse_telemetry(self) -> None:
+        raw_tel = self._raw_data.get("telemetry", {})
+        if not isinstance(raw_tel, dict):
+            raise ConfigValidationError("Sekcja [telemetry] musi być tabelą TOML.")
+        raw_budget = raw_tel.get("session_token_budget", 150_000)
+        if isinstance(raw_budget, bool) or not isinstance(raw_budget, int) or raw_budget <= 0:
+            raise ConfigValidationError(
+                f"Pole [telemetry].session_token_budget musi być dodatnią liczbą całkowitą, otrzymano: {raw_budget!r}"
+            )
+        self.telemetry = TelemetryConfig(session_token_budget=raw_budget)
 
     def _parse_presentation(self) -> None:
         pres_dict = self._raw_data["presentation"]

@@ -79,14 +79,24 @@ class SessionBootstrap:
 
     def read_telemetry_statusline(self) -> str:
         """Zwraca jednoliniowy statusline telemetrii tokenów z lab_core.telemetry (fail-safe)."""
+        budget = 150_000
+        if self.config is not None and getattr(self.config, "telemetry", None) is not None:
+            budget = int(self.config.telemetry.session_token_budget)
+        else:
+            try:
+                from lab_core.telemetry import resolve_session_token_budget
+                budget = resolve_session_token_budget(self.vault_root)
+            except Exception:
+                budget = 150_000
         try:
             from lab_core.telemetry import find_latest_transcript, format_statusline, parse_telemetry
 
             transcript = find_latest_transcript()
-            metrics = parse_telemetry(transcript)
+            metrics = parse_telemetry(transcript, limit=budget)
             return format_statusline(metrics)
         except Exception:
-            return "🧠 0 / 250k (0.0%) 🟢"
+            limit_fmt = f"{budget // 1000}k" if budget >= 1000 and budget % 1000 == 0 else str(budget)
+            return f"🧠 0 / {limit_fmt} (0.0%) 🟢"
 
     def run(self, dry_run: bool = False) -> Dict[str, Any]:
         """Uruchamia wszystkie kroki bootstrapu sesji i zwraca zwięzły raport stanu."""
@@ -220,7 +230,7 @@ def format_text_output(data: Dict[str, Any]) -> str:
         "=" * 64,
         f"SESSION BOOTSTRAP - STATUS: {status_icon} {status}",
         "=" * 64,
-        f"  - Telemetria:         {data.get('telemetry_statusline', '🧠 0 / 250k (0.0%) 🟢')}",
+        f"  - Telemetria:         {data.get('telemetry_statusline', '🧠 0 / 150k (0.0%) 🟢')}",
         f"  - Jakość skarbca:     {q_icon} {data['quality_status']}",
         f"  - Agenda Robocza:     {data['agenda_file']}",
         f"  - Skrzynka (ingest):  {inbox_icon} {data['inbox_count']} oczekuje na drenaż",

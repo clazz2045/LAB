@@ -46,6 +46,7 @@ from lab_core.telemetry import (
     format_tokens,
     main,
     parse_telemetry,
+    resolve_session_token_budget,
     clean_workshop_telemetry,
     update_workshop_file,
 )
@@ -64,34 +65,45 @@ class TestTokenCalculationsAndFormatting(unittest.TestCase):
         self.assertEqual(format_tokens(200000), "200k")
 
     def test_calculate_zone_default_limit(self) -> None:
-        # Komfortowa (< 200 000)
-        zone, icon, display = calculate_zone(150_000)
+        self.assertEqual(DEFAULT_WINDOW_LIMIT, 150_000)
+        # Komfortowa (< 120 000 dla domyślnego limitu 150 000)
+        zone, icon, display = calculate_zone(100_000)
         self.assertEqual(zone, ZONE_COMFORT)
         self.assertEqual(icon, ICON_COMFORT)
         self.assertEqual(display, "🟢 Komfortowa")
 
-        zone, icon, display = calculate_zone(199_999)
+        zone, icon, display = calculate_zone(119_999)
         self.assertEqual(zone, ZONE_COMFORT)
 
-        # Wymaga uwagi (200 000 - 240 000)
-        zone, icon, display = calculate_zone(200_000)
+        # Wymaga uwagi (120 000 - 144 000)
+        zone, icon, display = calculate_zone(120_000)
         self.assertEqual(zone, ZONE_ATTENTION)
         self.assertEqual(icon, ICON_ATTENTION)
         self.assertEqual(display, "🟡 Wymaga uwagi")
 
-        zone, icon, display = calculate_zone(220_000)
+        zone, icon, display = calculate_zone(135_000)
         self.assertEqual(zone, ZONE_ATTENTION)
 
-        zone, icon, display = calculate_zone(240_000)
+        zone, icon, display = calculate_zone(144_000)
         self.assertEqual(zone, ZONE_ATTENTION)
 
-        # Krytyczna (> 240 000)
-        zone, icon, display = calculate_zone(240_001)
+        # Krytyczna (> 144 000)
+        zone, icon, display = calculate_zone(144_001)
         self.assertEqual(zone, ZONE_CRITICAL)
         self.assertEqual(icon, ICON_CRITICAL)
         self.assertEqual(display, "🔴 Krytyczna")
 
-        zone, icon, display = calculate_zone(250_000)
+        zone, icon, display = calculate_zone(150_000)
+        self.assertEqual(zone, ZONE_CRITICAL)
+
+    def test_calculate_zone_250k_limit(self) -> None:
+        zone, _, _ = calculate_zone(150_000, limit=250_000)
+        self.assertEqual(zone, ZONE_COMFORT)
+        zone, _, _ = calculate_zone(200_000, limit=250_000)
+        self.assertEqual(zone, ZONE_ATTENTION)
+        zone, _, _ = calculate_zone(240_000, limit=250_000)
+        self.assertEqual(zone, ZONE_ATTENTION)
+        zone, _, _ = calculate_zone(240_001, limit=250_000)
         self.assertEqual(zone, ZONE_CRITICAL)
 
     def test_calculate_zone_custom_limit(self) -> None:
@@ -377,7 +389,7 @@ class TestCLIIntegration(unittest.TestCase):
         old_stdout = sys.stdout
         sys.stdout = stdout_buf
         try:
-            exit_code = main(["--transcript-path", str(self.transcript_file), "--statusline"])
+            exit_code = main(["--transcript-path", str(self.transcript_file), "--limit", "250000", "--statusline"])
         finally:
             sys.stdout = old_stdout
 
@@ -390,7 +402,7 @@ class TestCLIIntegration(unittest.TestCase):
         old_stdout = sys.stdout
         sys.stdout = stdout_buf
         try:
-            exit_code = main(["--transcript-path", str(self.transcript_file), "--json"])
+            exit_code = main(["--transcript-path", str(self.transcript_file), "--limit", "250000", "--json"])
         finally:
             sys.stdout = old_stdout
 
@@ -401,6 +413,36 @@ class TestCLIIntegration(unittest.TestCase):
         self.assertEqual(payload["total_context_tokens"], 124000)
         self.assertEqual(payload["percentage"], 49.6)
         self.assertEqual(payload["zone"], ZONE_COMFORT)
+
+    def test_resolve_session_token_budget_and_cli_override(self) -> None:
+        from unittest.mock import patch
+
+        empty_dir = self.dir_path / "no_config"
+        empty_dir.mkdir()
+        self.assertEqual(resolve_session_token_budget(vault_root=empty_dir), 150_000)
+
+        # CLI --limit ma najwyższy priorytet nad configiem
+        with patch("lab_core.telemetry.resolve_session_token_budget", return_value=250_000):
+            stdout_buf = io.StringIO()
+            old_stdout = sys.stdout
+            sys.stdout = stdout_buf
+            try:
+                exit_code = main(["--transcript-path", str(self.transcript_file), "--limit", "150000", "--statusline"])
+            finally:
+                sys.stdout = old_stdout
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stdout_buf.getvalue().strip(), "🧠 124k / 150k (82.7%) 🟡")
+
+            # Bez --limit bierze wartość z resolve_session_token_budget()
+            stdout_buf2 = io.StringIO()
+            old_stdout = sys.stdout
+            sys.stdout = stdout_buf2
+            try:
+                exit_code2 = main(["--transcript-path", str(self.transcript_file), "--statusline"])
+            finally:
+                sys.stdout = old_stdout
+            self.assertEqual(exit_code2, 0)
+            self.assertEqual(stdout_buf2.getvalue().strip(), "🧠 124k / 250k (49.6%) 🟢")
 
     def test_cli_clean_and_update_workshop_cleans_file(self) -> None:
         stdout_buf = io.StringIO()

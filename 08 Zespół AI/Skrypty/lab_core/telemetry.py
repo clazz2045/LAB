@@ -41,10 +41,13 @@ except LabEnvError:
     _vault_root = None
 
 try:
-    from core_config import ConfigError, ConfigManager
+    from lab_core.config import ConfigError, ConfigManager
 except ImportError:
-    ConfigManager = None  # type: ignore
-    ConfigError = Exception  # type: ignore
+    try:
+        from core_config import ConfigError, ConfigManager
+    except ImportError:
+        ConfigManager = None  # type: ignore
+        ConfigError = Exception  # type: ignore
 
 
 # ==============================================================================
@@ -75,7 +78,31 @@ class WorkshopUpdateError(TelemetryError):
 # STRUKTURY DANYCH I STAŁE
 # ==============================================================================
 
-DEFAULT_WINDOW_LIMIT = 250_000
+DEFAULT_WINDOW_LIMIT = 150_000
+
+
+def resolve_session_token_budget(
+    vault_root: Optional[Union[str, Path]] = None,
+    default: int = DEFAULT_WINDOW_LIMIT,
+) -> int:
+    """Odczytuje [telemetry].session_token_budget z lab.config.toml (fallback na default)."""
+    if ConfigManager is None:
+        return default
+    target_root: Optional[Path] = Path(vault_root).expanduser().resolve() if vault_root else _vault_root
+    if target_root is None:
+        try:
+            target_root = find_vault_root(Path.cwd())
+        except Exception:
+            return default
+    cfg_file = target_root / "lab.config.toml"
+    if not cfg_file.is_file():
+        return default
+    try:
+        cfg = ConfigManager(config_path=cfg_file, vault_root=target_root)
+        budget = int(cfg.telemetry.session_token_budget)
+        return budget if budget > 0 else default
+    except Exception:
+        return default
 
 ZONE_COMFORT = "Komfortowa"
 ZONE_ATTENTION = "Wymaga uwagi"
@@ -226,20 +253,12 @@ def format_tokens(n: int) -> str:
 
 def calculate_zone(total_context_tokens: int, limit: int = DEFAULT_WINDOW_LIMIT) -> Tuple[str, str, str]:
     """
-    Określa strefę obciążenia okna kontekstowego:
-    Domyślne progi dla limitu 250 000:
-      < 200 000: 🟢 Komfortowa
-      200 000 - 240 000: 🟡 Wymaga uwagi
-      > 240 000: 🔴 Krytyczna
-
-    Dla limitów niestandardowych zachowuje proporcje 80% i 96%.
+    Określa strefę obciążenia okna kontekstowego (progi 80% i 96% limitu):
+    - Dla 150 000: < 120 000 🟢 | 120 000..144 000 🟡 | > 144 000 🔴
+    - Dla 250 000: < 200 000 🟢 | 200 000..240 000 🟡 | > 240 000 🔴
     """
-    if limit == DEFAULT_WINDOW_LIMIT:
-        warn_threshold = 200_000
-        crit_threshold = 240_000
-    else:
-        warn_threshold = int(limit * 0.80)
-        crit_threshold = int(limit * 0.96)
+    warn_threshold = int(limit * 0.80)
+    crit_threshold = int(limit * 0.96)
 
     if total_context_tokens < warn_threshold:
         zone = ZONE_COMFORT
@@ -383,7 +402,7 @@ def find_latest_transcript(
 
 def parse_telemetry(
     transcript_path: Union[str, Path],
-    limit: int = DEFAULT_WINDOW_LIMIT
+    limit: Optional[int] = None,
 ) -> TokenMetrics:
     """
     Odczytuje plik transcript.jsonl i wyciąga najnowsze metryki tokenów:
@@ -391,6 +410,7 @@ def parse_telemetry(
     - total_context_tokens = input_tokens + cache_read_tokens.
     - procent zużycia okna i strefę.
     """
+    effective_limit = int(limit) if limit is not None else resolve_session_token_budget()
     path = Path(transcript_path).expanduser().resolve()
     if not path.is_file():
         raise TranscriptNotFoundError(f"Plik transkryptu nie istnieje: {path}")
@@ -424,13 +444,13 @@ def parse_telemetry(
 
     if last_token_entry is None:
         if path.name.startswith("rollout-"):
-            zone, zone_icon, zone_display = calculate_zone(0, limit)
+            zone, zone_icon, zone_display = calculate_zone(0, effective_limit)
             return TokenMetrics(
                 input_tokens=0,
                 cache_read_tokens=0,
                 output_tokens=0,
                 total_context_tokens=0,
-                limit=limit,
+                limit=effective_limit,
                 percentage=0.0,
                 zone=zone,
                 zone_icon=zone_icon,
@@ -453,16 +473,16 @@ def parse_telemetry(
         raise TelemetryDataError(f"Niepoprawny format wartości liczbowych tokenów: {e}") from e
 
     total_context_tokens = input_tokens + cache_read_tokens
-    percentage = round((total_context_tokens / limit) * 100, 2) if limit > 0 else 0.0
+    percentage = round((total_context_tokens / effective_limit) * 100, 2) if effective_limit > 0 else 0.0
 
-    zone, zone_icon, zone_display = calculate_zone(total_context_tokens, limit)
+    zone, zone_icon, zone_display = calculate_zone(total_context_tokens, effective_limit)
 
     return TokenMetrics(
         input_tokens=input_tokens,
         cache_read_tokens=cache_read_tokens,
         output_tokens=output_tokens,
         total_context_tokens=total_context_tokens,
-        limit=limit,
+        limit=effective_limit,
         percentage=percentage,
         zone=zone,
         zone_icon=zone_icon,
@@ -829,9 +849,10 @@ def aggregate_transcript_usage(transcript_path: Union[str, Path]) -> Tuple[Usage
 def summarize_session_telemetry(
     transcript_path: Union[str, Path],
     brain_dir: Optional[Union[str, Path]] = None,
-    limit: int = DEFAULT_WINDOW_LIMIT,
+    limit: Optional[int] = None,
 ) -> SessionSummary:
     """Oblicza podsumowanie zużycia tokenów dla sesji głównej, jej subagentów i łącznie."""
+    effective_limit = int(limit) if limit is not None else resolve_session_token_budget()
     path = Path(transcript_path).expanduser().resolve()
     main_totals, last_ctx = aggregate_transcript_usage(path)
     related = collect_related_subagents(path, brain_dir=brain_dir)
@@ -847,7 +868,7 @@ def summarize_session_telemetry(
             continue
 
     total_totals = main_totals.add(sub_totals)
-    zone, _, _ = calculate_zone(last_ctx, limit=limit)
+    zone, _, _ = calculate_zone(last_ctx, limit=effective_limit)
 
     return SessionSummary(
         session_id=_infer_session_id(path),
@@ -858,7 +879,7 @@ def summarize_session_telemetry(
         main=main_totals,
         subagents=sub_totals,
         total=total_totals,
-        limit=limit,
+        limit=effective_limit,
         load_zone=zone,
     )
 
@@ -1319,8 +1340,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--limit",
         type=int,
-        default=DEFAULT_WINDOW_LIMIT,
-        help=f"Limit wielkości okna kontekstowego w tokenach (domyślnie: {DEFAULT_WINDOW_LIMIT}).",
+        default=None,
+        help=f"Limit wielkości okna kontekstowego w tokenach (domyślnie: [telemetry].session_token_budget lub {DEFAULT_WINDOW_LIMIT}).",
     )
     parser.add_argument(
         "--brain-dir",
@@ -1338,7 +1359,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--statusline",
         action="store_true",
         dest="statusline_mode",
-        help="Zwraca zwarty 1-linijkowy format dla paska menu / Raycasta (np. '🧠 109.4k / 250k (43.8%%) 🟢').",
+        help="Zwraca zwarty 1-linijkowy format dla paska menu / Raycasta (np. '🧠 109.4k / 150k (72.9%%) 🟢').",
     )
     parser.add_argument(
         "--clean-workshop",
@@ -1438,11 +1459,13 @@ def main(args: Optional[List[str]] = None) -> int:
         else:
             transcript_file = find_latest_transcript(brain_dir=parsed_args.brain_dir)
 
+        effective_limit = parsed_args.limit if parsed_args.limit is not None else resolve_session_token_budget()
+
         if parsed_args.session_summary:
             summary = summarize_session_telemetry(
                 transcript_file,
                 brain_dir=parsed_args.brain_dir,
-                limit=parsed_args.limit,
+                limit=effective_limit,
             )
             saved_row_id: Optional[int] = None
             if parsed_args.save_db:
@@ -1459,7 +1482,7 @@ def main(args: Optional[List[str]] = None) -> int:
             return 0
 
         # 2. Parsowanie telemetrii
-        metrics = parse_telemetry(transcript_file, limit=parsed_args.limit)
+        metrics = parse_telemetry(transcript_file, limit=effective_limit)
 
         # 3. Oczyszczanie pliku warsztatu (jeśli zażądano lub użyto wycofanej flagi)
         workshop_cleaned = False

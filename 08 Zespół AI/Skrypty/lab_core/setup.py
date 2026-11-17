@@ -49,6 +49,7 @@ from lab_core.installer import (
     InstallOptions,
     InstallResult,
     LabEngineInstaller,
+    default_session_token_budget,
 )
 from lab_core.themes import THEME_PRESETS, get_theme_preset, list_theme_presets
 
@@ -539,14 +540,23 @@ def _build_starter_prompt(
     coordinator_name: str = "Adam",
     owner_name: str = "",
     llm_provider: str = "",
+    session_token_budget: Optional[int] = None,
 ) -> str:
     """Buduje spersonalizowany prompt inicjujący dla Koordynatora nowej instancji."""
     coord = (coordinator_name or "Adam").strip()
     owner_hint = f" (właściciel: {owner_name.strip()})" if owner_name and owner_name.strip() else ""
+    prov_norm = (llm_provider or "").strip().lower()
     provider_label = _STARTER_PROVIDER_LABELS.get(
-        (llm_provider or "").strip().lower(),
+        prov_norm,
         "Antigravity / Claude Code / OpenAI Codex CLI",
     )
+    if session_token_budget is not None or prov_norm in _STARTER_PROVIDER_LABELS:
+        budget = int(session_token_budget) if session_token_budget is not None else default_session_token_budget(prov_norm)
+        budget_k = budget // 1000
+        warn_k = int(budget * 0.80) // 1000
+        budget_hint = f"{warn_k}–{budget_k}k tokenów"
+    else:
+        budget_hint = "tokenowy (domyślnie 150k dla Claude/Codex, do 250k w Antigravity)"
     return (
         f"Cześć {coord}! Właśnie uruchomiłem nową instancję LAB (mój Partner Zarządzania Wiedzą – PZW){owner_hint} "
         "i chcę rozpocząć pracę w Obsidianie.\n\n"
@@ -560,7 +570,7 @@ def _build_starter_prompt(
         "(przede wszystkim: czym różni się '01 Skrzynka' od '02 Warsztat' i '03 Projekty').\n"
         "4. Po sprawdzeniu gotowości środowiska wyjaśnij mi prosto zasady higieny sesji i telemetrii:\n"
         "   - dlaczego każda odpowiedź kończy się paskiem zużycia tokenów,\n"
-        "   - co oznacza próg higieniczny 200–250k tokenów i ostrzeżenia przed limitem,\n"
+        f"   - co oznacza próg higieniczny {budget_hint} i ostrzeżenia przed limitem,\n"
         f"   - jak bezpiecznie zamknąć sesję komendą /checkpoint i otworzyć nową sesję w {provider_label}.\n"
         "5. Używaj prostego, naturalnego języka. Unikaj żargonu programistycznego. "
         "Po każdym kroku zadawaj mi jedno pytanie sprawdzające, czy wszystko poszło zgodnie z planem, "
@@ -620,6 +630,12 @@ def _render_result_html(result: InstallResult, options: Optional[InstallOptions]
         else "—"
     )
     llm_txt = options.llm_provider if options else "—"
+    session_budget = (
+        int(options.session_token_budget)
+        if (options and options.session_token_budget)
+        else (default_session_token_budget(options.llm_provider) if options else 150_000)
+    )
+    budget_txt = f"{session_budget // 1000}k" if options else "150k (domyślny)"
     theme_txt = (
         f"tryb {options.theme_mode} (ciemny: {options.theme_preset_dark}, jasny: {options.theme_preset_light})"
         if options
@@ -647,10 +663,14 @@ def _render_result_html(result: InstallResult, options: Optional[InstallOptions]
       <li>Lokalizacja skarbca: <code>{html.escape(target_str)}</code></li>
       <li>iCloud / GitHub: <strong>{html.escape(icloud_txt)}</strong> / <strong>{html.escape(github_txt)}</strong></li>
       <li>Moduły: <strong>{html.escape(modules_txt)}</strong></li>
-      <li>Środowisko AI (LLM): <strong>{html.escape(llm_txt)}</strong></li>
+      <li>Środowisko AI (LLM): <strong>{html.escape(llm_txt)}</strong> (budżet sesji: <strong>{html.escape(budget_txt)}</strong>)</li>
       <li>Motyw Obsidiana: <strong>{html.escape(theme_txt)}</strong></li>
       <li>Imiona agentów AI: <strong>{html.escape(agents_summary)}</strong></li>
     </ul>
+  </div>
+  <div class="box" id="telemetryBudgetInfo">
+    <strong>🧠 Higiena okna kontekstowego i telemetria tokenów:</strong>
+    <p style="margin:6px 0 0 0;">Domyślny budżet higieniczny to <strong>150k tokenów</strong> dla <strong>Claude Code</strong> i <strong>OpenAI Codex CLI</strong> (strefa uwagi od 80% = 120k). Przy pracy w <strong>Antigravity</strong> z modelami wielko-oknowymi (np. Gemini) budżet wynosi <strong>250k</strong> (strefa uwagi od 200k). Wartość tę możesz w każdej chwili zmienić w <code>lab.config.toml</code> (sekcja <code>[telemetry]</code> &rarr; <code>session_token_budget</code>).</p>
   </div>"""
     coord_name = (
         (options.agent_names or {}).get("coordinator") or options.coordinator_name
@@ -661,6 +681,7 @@ def _render_result_html(result: InstallResult, options: Optional[InstallOptions]
         coord_name,
         options.user_name if options else "",
         options.llm_provider if options else "",
+        session_token_budget=session_budget if options else None,
     )
     starter_prompt_js = html.escape(json.dumps(starter_prompt_text), quote=True)
     starter_card_html = _load_starter_card_html()

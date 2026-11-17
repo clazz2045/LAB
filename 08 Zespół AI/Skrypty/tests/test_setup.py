@@ -144,6 +144,18 @@ class TestSetupWebWizard(unittest.TestCase):
         self.assertEqual(opts.llm_provider, "codex")
         self.assertFalse(opts.icloud_enabled)
         self.assertEqual(opts.llm_model, "gpt-5.4")
+        self.assertEqual(opts.session_token_budget, 150_000)
+
+        res = InstallResult(
+            success=True,
+            target_dir=Path("/tmp/CodexVault"),
+            instance_name="CodexVault",
+            elapsed_seconds=0.1,
+        )
+        html_codex = _render_result_html(res, options=opts)
+        self.assertIn('id="telemetryBudgetInfo"', html_codex)
+        self.assertIn("120–150k tokenów", html_codex)
+        self.assertIn("OpenAI Codex CLI", html_codex)
 
 
 if __name__ == "__main__":

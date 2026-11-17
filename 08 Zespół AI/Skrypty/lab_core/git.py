@@ -216,8 +216,8 @@ python3 "08 Zespół AI/Skrypty/check_quality.py" --vault-root .
 
 ## Higiena sesji i telemetria tokenów
 
-1. **Pasek telemetrii pod każdą odpowiedzią:** Koordynator raportuje aktualne zużycie okna kontekstowego (`🧠 Xk / 250k (Y%)`), abyś widział, ile pamięci roboczej pozostało w bieżącej rozmowie.
-2. **Próg higieniczny 200–250k tokenów:** Gdy zbliżysz się do **75–85%** (ok. 190–215k), system wyświetli ostrzeżenie — w długich wątkach rośnie ryzyko przeoczenia szczegółów (*Lost in the Middle*).
+1. **Pasek telemetrii pod każdą odpowiedzią:** Koordynator raportuje aktualne zużycie okna kontekstowego (`🧠 Xk / <Limit>k (Y%)`), abyś widział, ile pamięci roboczej pozostało w bieżącej rozmowie.
+2. **Budżet higieniczny sesji (`[telemetry].session_token_budget`):** Uniwersalny próg domyślny to **150k tokenów** dla **Claude Code** i **OpenAI Codex CLI** (ostrzeżenie od **80%**, czyli 120k). Przy pracy w **Antigravity** z modelami wielko-oknowymi możesz ustawić w `lab.config.toml` wartość **250_000** (`250k`, ostrzeżenie od 200k), aby chronić jakość analiz w długich wątkach (*Lost in the Middle*).
 3. **Bezpieczne zamknięcie i nowa sesja:** Uruchom **`/checkpoint`** (zapisuje stan Agendy i Dziennik Sesji), a następnie otwórz nową, świeżą rozmowę:
    - **Antigravity:** kliknij *New Chat* (`+`) w panelu konwersacji.
    - **Claude Code:** wpisz `/clear` (lub uruchom nową sesję `claude` w katalogu skarbca).
