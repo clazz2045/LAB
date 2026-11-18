@@ -17,8 +17,10 @@ Architektura:
      - invoke_subagent: Wymuszenie jawnego parametru Model (ochrona budżetu i okna 250k).
        Dla 'research' dozwolone wyłącznie 'flash' / 'flash_lite'.
        Dla 'self' dozwolone jawne 'flash', 'flash_lite', 'inherit', 'pro'.
-     - read_file: Model Read-Only (brak licznika i brak blokady odczytu plików w sesji głównej;
-       zakres merytoryczny i ochronę okna 250k reguluje AGENTS.md).
+     - read_file / view_file: Ścisła biała lista ścieżek (Zero Code Reading in Main:
+       bezwzględna blokada plików .py, katalogów tests/*, konfiguracji i baz danych; dozwolone wyłącznie
+       Agenda Robocza, Dzienniki Sesji, notatki Warsztatu oraz pliki sesji/brain/tmp) oraz twardy licznik
+       w czasie rzeczywistym ograniczający serie odczytów w sesji głównej do max 2 przed delegacją (Stop & Ask).
      - write_file / edit_file: Dopuszczone tylko pliki Agendy, Dashboardu i sesji (brain/tmp).
        Wszystkie pliki produkcyjne (kod, baza wiedzy, projekty, operacje, zasoby) są bezwzględnie blokowane.
      - run_command: Dopuszczone tylko polecenia statusowe oraz skrypty koordynacyjne:
@@ -41,6 +43,7 @@ import re
 import shlex
 import sys
 import tempfile
+import time
 import traceback
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
@@ -156,6 +159,25 @@ DENY_REASON_RESEARCH_MODEL = (
     "BLOKADA REGUŁY 8: Dla subagenta 'research' dopuszczalne są wyłącznie modele 'flash' lub 'flash_lite' (zakaz 'inherit' i 'pro')."
 )
 
+COORDINATOR_READ_LIMIT = 2
+
+DENY_REASON_READ_LIMIT = (
+    "BLOKADA REGUŁY 8: Wykorzystano limit 2 odczytów w sesji głównej. "
+    "Zastosuj zasadę Stop & Ask: zadaj pytanie człowiekowi na czacie lub zdeleguj zwiad do subagenta."
+)
+
+DENY_REASON_READ_CODE = (
+    "BLOKADA REGUŁY 8: Koordynator nie ma uprawnień do inspekcji kodu w sesji głównej. "
+    "Zdeleguj to zadanie do właściwego subagenta (Maks/Klara)."
+)
+
+DENY_REASON_READ_WHITELIST = (
+    "BLOKADA REGUŁY 8: Koordynator może czytać wyłącznie pliki Agendy Roboczej, Dzienników Sesji oraz Warsztatu. "
+    "Zdeleguj zwiad do właściwego subagenta (Maks/Klara/Edyta)."
+)
+
+READ_STATE_FILE = Path(tempfile.gettempdir()) / "lab_coordinator_read_state.json"
+
 LOG_FILE_PATH = Path("/tmp/lab_pre_tool_guard_error.log")
 
 
@@ -256,6 +278,144 @@ def is_allowed_coordinator_write(raw_path: str, vault_root: Path) -> bool:
 
     # Wszelki zapis do kodu, bazy wiedzy, projektów jest zakazany w sesji głównej
     return False
+
+
+def is_internal_session_file(raw_path: str, vault_root: Path) -> bool:
+    """Sprawdza, czy plik jest wewnętrznym plikiem sesji / harnessu (nie zużywa limitu odczytów)."""
+    p = normalize_target_path(raw_path, vault_root)
+    p_str = str(p)
+    parts = set(p.parts)
+    return (
+        "brain" in parts
+        or ".system_generated" in parts
+        or p_str.startswith("/tmp")
+        or p_str.startswith("/private/tmp")
+        or p_str.startswith(tempfile.gettempdir())
+        or "tmp" in parts
+    )
+
+
+def is_allowed_coordinator_read(raw_path: str, vault_root: Path) -> Tuple[bool, Optional[str]]:
+    """Weryfikuje, czy plik może być odczytany przez Koordynatora w sesji głównej."""
+    if not raw_path or not raw_path.strip():
+        return False, DENY_REASON_READ_WHITELIST
+
+    root = vault_root.resolve()
+    p = normalize_target_path(raw_path, root)
+    p_str = str(p)
+    parts = set(p.parts)
+
+    # 1. Zero Code Reading in Main: Twarda blokada kodu .py oraz katalogów testów
+    if p.suffix == ".py" or p.name.endswith(".py") or "tests" in parts:
+        return False, DENY_REASON_READ_CODE
+
+    # 2. Blokada baz danych i plików konfiguracyjnych poza dozwolonymi
+    if p.suffix in (".db", ".sqlite", ".sqlite3") or p.name in ("lab.config.toml", "config.toml"):
+        return False, DENY_REASON_READ_WHITELIST
+
+    # 3. Sesja / brain / tmp / logi harnessu
+    if "brain" in parts or ".system_generated" in parts:
+        return True, None
+    if (
+        p_str.startswith("/tmp")
+        or p_str.startswith("/private/tmp")
+        or p_str.startswith(tempfile.gettempdir())
+        or "tmp" in parts
+    ):
+        return True, None
+
+    # 4. Agenda Robocza w Warsztacie
+    if ("Agenda Robocza" in p.name or "Agenda_Robocza" in p.name) and (
+        "02 Warsztat" in parts or "Warsztat" in parts or p.parent.name.endswith("Warsztat")
+    ):
+        return True, None
+
+    # 5. Dzienniki Sesji (w 08 Zespół AI lub pokoju zarządzania)
+    if "Dzienniki Sesji" in parts or "Dzienniki_Sesji" in parts:
+        return True, None
+
+    # 6. Dashboard i notatki robocze w Warsztacie
+    if "02 Warsztat" in parts or "Warsztat" in parts or p.parent.name.endswith("Warsztat"):
+        return True, None
+
+    # Wszystkie inne ścieżki (Baza Wiedzy, Projekty, Operacje, Zasoby, Skrypty, korzeń skarbca) są blokowane dla Koordynatora
+    return False, DENY_REASON_READ_WHITELIST
+
+
+def get_read_state(state_file: Optional[Path] = None) -> Dict[str, Any]:
+    target = state_file or READ_STATE_FILE
+    if target.is_file():
+        try:
+            return json.loads(target.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+    return {}
+
+
+def save_read_state(state: Dict[str, Any], state_file: Optional[Path] = None) -> None:
+    target = state_file or READ_STATE_FILE
+    try:
+        target.write_text(json.dumps(state), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def reset_coordinator_read_counter(
+    transcript_path: Optional[str] = None,
+    state_file: Optional[Path] = None,
+) -> None:
+    state = get_read_state(state_file)
+    state["consecutive_reads"] = 0
+    state["last_reset_time"] = time.time()
+    if transcript_path:
+        state["transcript_path"] = str(transcript_path)
+    save_read_state(state, state_file)
+
+
+def check_and_increment_read_counter(
+    transcript_path: Optional[str] = None,
+    state_file: Optional[Path] = None,
+) -> Tuple[bool, Optional[str]]:
+    """Sprawdza i inkrementuje licznik odczytów dla Koordynatora w sesji głównej."""
+    state = get_read_state(state_file)
+    current_tp = str(transcript_path) if transcript_path else state.get("transcript_path", "")
+
+    # Nowa sesja (zmiana transkryptu) -> reset
+    if current_tp and state.get("transcript_path") and state.get("transcript_path") != current_tp:
+        state["consecutive_reads"] = 0
+        state["last_user_step_idx"] = -1
+        state["transcript_path"] = current_tp
+
+    # Sprawdzenie nowego wejścia użytkownika w transkrypcie
+    if current_tp and Path(current_tp).is_file():
+        try:
+            latest_user_idx = -1
+            with open(current_tp, "r", encoding="utf-8", errors="replace") as f:
+                for idx, line in enumerate(f):
+                    s = line.strip()
+                    if not s:
+                        continue
+                    try:
+                        step = json.loads(s)
+                        if step.get("source") == "USER_EXPLICIT" or step.get("type") == "USER_INPUT":
+                            latest_user_idx = idx
+                    except Exception:
+                        pass
+            if latest_user_idx >= 0 and latest_user_idx > state.get("last_user_step_idx", -1):
+                state["consecutive_reads"] = 0
+                state["last_user_step_idx"] = latest_user_idx
+        except Exception:
+            pass
+
+    count = int(state.get("consecutive_reads", 0))
+    if count >= COORDINATOR_READ_LIMIT:
+        return False, DENY_REASON_READ_LIMIT
+
+    state["consecutive_reads"] = count + 1
+    state["transcript_path"] = current_tp
+    state["last_read_time"] = time.time()
+    save_read_state(state, state_file)
+    return True, None
 
 
 def is_allowed_coordinator_command(cmd_str: str) -> Tuple[bool, Optional[str]]:
@@ -471,7 +631,11 @@ def extract_event_data(payload: Dict[str, Any]) -> Tuple[str, Dict[str, Any], Op
     return tool_name, tool_args, transcript_path
 
 
-def evaluate_pre_tool(payload: Dict[str, Any], vault_root: Optional[Path] = None) -> Dict[str, Any]:
+def evaluate_pre_tool(
+    payload: Dict[str, Any],
+    vault_root: Optional[Path] = None,
+    state_file: Optional[Path] = None,
+) -> Dict[str, Any]:
     """Główny silnik ewaluacji PreToolUse."""
     tool_name, tool_args, transcript_path = extract_event_data(payload)
     tool_name_lower = tool_name.lower().strip()
@@ -484,19 +648,38 @@ def evaluate_pre_tool(payload: Dict[str, Any], vault_root: Optional[Path] = None
     if tool_name_lower in SUBAGENT_TOOLS:
         allowed, reason = is_allowed_coordinator_subagent(tool_args)
         if allowed:
+            reset_coordinator_read_counter(transcript_path, state_file)
             return {"decision": "allow"}
         return {"decision": "deny", "reason": reason or DENY_REASON_SUBAGENT_MISSING_MODEL}
 
-    # Narzędzia Read-Only (read_file) oraz narzędzia nieobjęte restrykcjami (np. send_message)
-    if (
-        tool_name_lower in READ_TOOLS
-        or (tool_name_lower not in WRITE_TOOLS and tool_name_lower not in SHELL_TOOLS)
-    ):
-        return {"decision": "allow"}
-
     root = vault_root or find_vault_root_fast()
 
-    # KROK 3: Weryfikacja dla sesji głównej (Koordynator) - Narzędzia zapisu i poleceń
+    # KROK 3: Weryfikacja odczytu (read_file / view_file) dla Koordynatora (Sesja Główna)
+    if tool_name_lower in READ_TOOLS:
+        raw_path = str(
+            tool_args.get("Path")
+            or tool_args.get("path")
+            or tool_args.get("file_path")
+            or tool_args.get("FilePath")
+            or ""
+        )
+        allowed, reason = is_allowed_coordinator_read(raw_path, root)
+        if not allowed:
+            return {"decision": "deny", "reason": reason or DENY_REASON_READ_WHITELIST}
+
+        # Ścieżka dozwolona - sprawdzamy licznik kolejnych odczytów (nie wliczamy plików wewnętrznych /tmp oraz sesji/brain)
+        if not is_internal_session_file(raw_path, root):
+            allowed_cnt, reason_cnt = check_and_increment_read_counter(transcript_path, state_file)
+            if not allowed_cnt:
+                return {"decision": "deny", "reason": reason_cnt or DENY_REASON_READ_LIMIT}
+
+        return {"decision": "allow"}
+
+    # Narzędzia nieobjęte restrykcjami (np. send_message)
+    if tool_name_lower not in WRITE_TOOLS and tool_name_lower not in SHELL_TOOLS:
+        return {"decision": "allow"}
+
+    # KROK 4: Weryfikacja dla sesji głównej (Koordynator) - Narzędzia zapisu i poleceń
     if tool_name_lower in WRITE_TOOLS:
         raw_path = str(
             tool_args.get("Path")

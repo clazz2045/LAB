@@ -39,6 +39,13 @@ ensure_vault_in_sys_path(_script_dir)
 
 from lab_core.config import ConfigError, ConfigManager
 from lab_core.markdown import normalize_reference_frontmatter, parse_frontmatter
+from lab_core.metadata import (
+    extract_urls,
+    extract_youtube_video_id,
+    fetch_resource_metadata,
+    generate_reference_note_content,
+    sanitize_filename,
+)
 from lab_core.routing import DrainRouter, extract_date
 
 IGNORED_FILES = {".DS_Store", "desktop.ini"}
@@ -65,6 +72,7 @@ class DrainReport:
     total_items: int
     instance_name: str = "LAB"
     archived_items: List[str] = field(default_factory=list)
+    created_reference_notes: List[str] = field(default_factory=list)
     logged_to_workshop: bool = False
     dry_run: bool = False
     items: List[InboxItem] = field(default_factory=list)
@@ -77,6 +85,8 @@ class DrainReport:
             "total_items": self.total_items,
             "archived_items_count": len(self.archived_items),
             "archived_items": self.archived_items,
+            "created_reference_notes_count": len(self.created_reference_notes),
+            "created_reference_notes": self.created_reference_notes,
             "logged_to_workshop": self.logged_to_workshop,
             "dry_run": self.dry_run,
             "items": [it.to_dict() for it in self.items],
@@ -101,6 +111,7 @@ class InboxDrainer:
 
         self.inbox_dir = self.vault_root / self.inbox_room.path
         self.router = DrainRouter(vault_root=self.vault_root, config=self.config)
+        self.created_reference_notes: List[str] = []
 
     def list_items(self) -> List[InboxItem]:
         """Zwraca listę elementów w Skrzynce oczekujących na przetworzenie."""
@@ -149,6 +160,196 @@ class InboxDrainer:
         target_date = dt or datetime.date.today()
         return self.inbox_dir / "_archiwum" / target_date.strftime("%Y-%m")
 
+    def _extract_urls(self, text: str) -> List[str]:
+        """Wyciąga unikalne adresy URL z tekstu Markdown za pomocą lab_core.metadata."""
+        return extract_urls(text)
+
+    def _extract_human_thought(self, body: str, urls: List[str]) -> str:
+        """Wyciąga tekst komentarza/myśli człowieka ze zrzutu, oczyszczając adresy URL."""
+        cleaned = body
+        for u in urls:
+            cleaned = re.sub(rf'\[[^\]]*\]\({re.escape(u)}\)', '', cleaned)
+            cleaned = cleaned.replace(u, '')
+        lines = [l.strip() for l in cleaned.splitlines()]
+        filtered: List[str] = []
+        for l in lines:
+            l_clean = l.strip("<>()[] \t-–*")
+            if l_clean:
+                filtered.append(l)
+        return "\n\n".join(filtered).strip()
+
+    def _find_existing_reference_note(self, url: str) -> Optional[Path]:
+        """Wyszukuje istniejącą kartę referencyjną dla wskazanego URL w 06 Zasoby/Notatki/."""
+        try:
+            assets_room = self.config.get_room_by_role("reference-and-assets")
+        except ConfigError:
+            try:
+                assets_room = self.config.get_room("06")
+            except ConfigError:
+                return None
+
+        notes_dir = self.vault_root / assets_room.path / "Notatki"
+        if not notes_dir.is_dir():
+            return None
+
+        vid = extract_youtube_video_id(url)
+        clean_url = url.strip()
+
+        for note_path in notes_dir.glob("*.md"):
+            try:
+                content = note_path.read_text(encoding="utf-8", errors="ignore")
+                if clean_url in content:
+                    return note_path
+                if vid and (f"v={vid}" in content or f"youtu.be/{vid}" in content or f"/shorts/{vid}" in content):
+                    return note_path
+            except Exception:
+                continue
+        return None
+
+    def _create_reference_note_for_url(
+        self,
+        url: str,
+        human_thought: str,
+        candidate_path: Path,
+    ) -> Path:
+        """
+        Deterministycznie tworzy kartę referencyjną w 06 Zasoby/Notatki/ z flagą consumed: false.
+        W przypadku dostępności sieci pobiera metadane przez lab_core.metadata (stage: distilled).
+        W przypadku błędu sieci/offline tworzy kartę fallback (stage: raw).
+        """
+        try:
+            assets_room = self.config.get_room_by_role("reference-and-assets")
+        except ConfigError:
+            assets_room = self.config.get_room("06")
+
+        notes_dir = self.vault_root / assets_room.path / "Notatki"
+        notes_dir.mkdir(parents=True, exist_ok=True)
+
+        today_str = datetime.date.today().isoformat()
+        target_date = self._extract_date(candidate_path.name) or datetime.date.today()
+        day_str = target_date.strftime("%Y-%m-%d")
+
+        meta: Optional[Dict[str, Any]] = None
+        try:
+            meta = fetch_resource_metadata(url, timeout=5)
+        except Exception:
+            meta = None
+
+        is_yt = bool(extract_youtube_video_id(url))
+        if meta and meta.get("title"):
+            raw_title = str(meta.get("title", "")).strip()
+            author = str(meta.get("author", "")).strip()
+            is_yt = bool(meta.get("is_youtube", is_yt))
+            desc = str(meta.get("description") or "").strip()
+            transcript = str(meta.get("transcript") or "").strip()
+
+            if not meta.get("section_thesis"):
+                if desc:
+                    meta["section_thesis"] = desc[:1000]
+                else:
+                    meta["section_thesis"] = f"Materiał referencyjny wprowadzony ze zrzutu dyktafonu: {raw_title}."
+
+            if not meta.get("section_details"):
+                if transcript:
+                    meta["section_details"] = transcript[:1200]
+                elif desc and len(desc) > 80:
+                    meta["section_details"] = (
+                        f"- Opis autorski: {desc[:300]}.\n"
+                        f"- Źródło referencyjne: {author or 'Zasób zewnętrzny'}.\n"
+                        f"- Data rejestracji: {today_str}."
+                    )
+                else:
+                    meta["section_details"] = (
+                        f"- Zarejestrowano ze zrzutu dyktafonu w dniu {today_str}.\n"
+                        f"- Identyfikator zasobu: {url}.\n"
+                        f"- Status weryfikacji: oczekuje na lekturę i pełną syntezę (consumed: false)."
+                    )
+
+            if is_yt and not meta.get("section_timeline"):
+                meta["section_timeline"] = (
+                    "- [00:00] Rozpoczęcie materiału źródłowego\n"
+                    "- [01:00] Omówienie zagadnień głównych"
+                )
+
+            if not meta.get("section_implications"):
+                meta["section_implications"] = (
+                    f"- Włączenie materiału '{raw_title}' do rejestru Zasobów LAB.\n"
+                    f"- Dwukierunkowe powiązanie z Dziennikiem Dnia: [[{day_str}|Dziennik Dnia: {day_str}]]."
+                )
+
+            if not meta.get("section_links"):
+                meta["section_links"] = f"- [[{assets_room.path}/Notatki]]\n- [[{day_str}|Dziennik Dnia: {day_str}]]"
+
+            content = generate_reference_note_content(
+                meta,
+                stage="distilled",
+                created_date=today_str,
+                vault_root=self.vault_root,
+                human_thought=human_thought,
+            )
+
+            if is_yt:
+                author_suffix = f" ({author})" if author else ""
+                raw_fname = f"Wideo – {raw_title}{author_suffix}"
+            else:
+                author_prefix = f"{author} – " if author else ""
+                raw_fname = f"{author_prefix}{raw_title}"
+        else:
+            import urllib.parse
+            parsed = urllib.parse.urlparse(url)
+            domain = parsed.netloc or "Zasob"
+            path_part = parsed.path.strip("/").replace("/", "-")
+            short_id = (path_part[:25] or url[-15:]).replace(" ", "_")
+            raw_title = f"{domain} ({short_id})"
+            raw_fname = f"Wideo – {raw_title}" if is_yt else f"Zasób – {raw_title}"
+
+            fallback_meta: Dict[str, Any] = {
+                "url": url,
+                "title": raw_title if is_yt else raw_fname,
+                "author": domain,
+                "is_youtube": is_yt,
+                "section_thesis": (
+                    f"Materiał referencyjny zarejestrowany ze zrzutu dyktafonu w trybie offline-first: [{url}]({url}). "
+                    f"Oczekuje na lekturę i pełną syntezę."
+                ),
+                "section_details": (
+                    f"- Identyfikator zasobu źródłowego: [{url}]({url}).\n"
+                    f"- Domena źródłowa: {domain}.\n"
+                    f"- Zarejestrowano w trybie offline-first w dniu {today_str}.\n"
+                    f"- Status weryfikacji: oczekuje na lekturę i pełną syntezę (consumed: false)."
+                ),
+                "section_timeline": (
+                    "- [00:00] Rozpoczęcie materiału źródłowego\n"
+                    "- [01:00] Omówienie zagadnień głównych"
+                ) if is_yt else "",
+                "section_implications": (
+                    f"- Włączenie zasobu '{raw_fname}' do rejestru Zasobów LAB.\n"
+                    f"- Dwukierunkowe powiązanie z Dziennikiem Dnia: [[{day_str}|Dziennik Dnia: {day_str}]]."
+                ),
+                "section_links": f"- [[{assets_room.path}/Notatki]]\n- [[{day_str}|Dziennik Dnia: {day_str}]]",
+            }
+
+            content = generate_reference_note_content(
+                fallback_meta,
+                stage="distilled",
+                created_date=today_str,
+                vault_root=self.vault_root,
+                human_thought=human_thought,
+            )
+
+        safe_stem = sanitize_filename(raw_fname)
+        target_path = notes_dir / f"{safe_stem}.md"
+        counter = 1
+        while target_path.exists():
+            target_path = notes_dir / f"{safe_stem} {counter}.md"
+            counter += 1
+
+        target_path.write_text(content, encoding="utf-8")
+        rel_str = str(target_path.relative_to(self.vault_root))
+        if rel_str not in self.created_reference_notes:
+            self.created_reference_notes.append(rel_str)
+        return target_path
+
     def archive_item(
         self,
         target_name_or_rel: str,
@@ -159,8 +360,10 @@ class InboxDrainer:
         - Dokumenty/Obrazy/Audio -> 06 Zasoby/
         - Materiały referencyjne -> 06 Zasoby/Notatki/
         - Wsady surowe i zrzuty -> 01 Skrzynka/_archiwum/YYYY-MM/
-        W przypadku zrzutów myśli (Wispr / raw-capture), ich treść jest automatycznie
-        doklejana do kanonicznego dziennika dnia w Warsztacie (02 Warsztat/_archiwum/YYYY/MM/YYYY-MM-DD.md).
+        W przypadku zrzutów myśli (Wispr / raw-capture):
+        - Wykryte linki URL podlegają automatycznemu ingestowi do 06 Zasoby/Notatki/.
+        - Treść zrzutu jest doklejana do Dziennika Dnia z linkami dwukierunkowymi do utworzonych kart.
+        - Surowy plik zrzutu wędruje do 01 Skrzynka/_archiwum/YYYY-MM/.
         Zwraca docelową ścieżkę.
         """
         # Znajdź plik w Skrzynce
@@ -173,7 +376,8 @@ class InboxDrainer:
                     f"Nie znaleziono elementu '{target_name_or_rel}' bezpośrednio w Skrzynce ({self.inbox_dir})"
                 )
 
-        # Reguła konkatenacji dla zrzutów myśli (Wispr / raw-capture):
+        # Reguła konkatenacji i ingestu linków dla zrzutów myśli (Wispr / raw-capture):
+        companion_notes: List[Path] = []
         if candidate.suffix == ".md" and candidate.is_file():
             try:
                 fm, body = parse_frontmatter(candidate)
@@ -187,7 +391,25 @@ class InboxDrainer:
                     or "type: raw-capture" in body
                 )
                 if is_thought_capture and not dry_run:
-                    self._append_to_daily_journal(candidate, raw_text=candidate.read_text(encoding="utf-8", errors="ignore"))
+                    raw_text = candidate.read_text(encoding="utf-8", errors="ignore")
+                    urls = self._extract_urls(raw_text)
+                    if urls:
+                        human_thought = self._extract_human_thought(body, urls)
+                        for u in urls:
+                            existing = self._find_existing_reference_note(u)
+                            if existing:
+                                companion_notes.append(existing)
+                                rel_exist = str(existing.relative_to(self.vault_root))
+                                if rel_exist not in self.created_reference_notes:
+                                    self.created_reference_notes.append(rel_exist)
+                            else:
+                                new_note = self._create_reference_note_for_url(
+                                    u, human_thought=human_thought, candidate_path=candidate
+                                )
+                                companion_notes.append(new_note)
+                    self._append_to_daily_journal(
+                        candidate, raw_text=raw_text, companion_notes=companion_notes
+                    )
             except Exception:
                 pass
 
@@ -332,7 +554,12 @@ Dokument oczekuje na zapoznanie się, lekturę oraz ewentualne opracowanie dojrz
         target_note.write_text(content, encoding="utf-8")
         return target_note
 
-    def _append_to_daily_journal(self, candidate_path: Path, raw_text: str) -> None:
+    def _append_to_daily_journal(
+        self,
+        candidate_path: Path,
+        raw_text: str,
+        companion_notes: Optional[List[Path]] = None,
+    ) -> None:
         """Deterministycznie dokleja treść zrzutu do kanonicznego Dziennika Dnia w Warsztacie."""
         target_date = self._extract_date(candidate_path.name) or datetime.date.today()
         year_str = target_date.strftime("%Y")
@@ -362,7 +589,12 @@ Dokument oczekuje na zapoznanie się, lekturę oraz ewentualne opracowanie dojrz
             # Uprość nagłówek
             header_title = header_title.replace("Wispr_", "Wispr: ")
 
-        entry_text = f"\n\n---\n\n## 🎙️ {time_tag}{header_title}\n\n{body}\n"
+        ref_block = ""
+        if companion_notes:
+            ref_lines = [f"> - 📄 Karta w Zasobach: [[{note.stem}]]" for note in companion_notes]
+            ref_block = "\n> [!info] Wykryte materiały referencyjne (Zasoby)\n" + "\n".join(ref_lines) + "\n"
+
+        entry_text = f"\n\n---\n\n## 🎙️ {time_tag}{header_title}\n\n{body}\n{ref_block}"
 
         if not daily_file.is_file():
             init_content = f"""---
@@ -440,6 +672,7 @@ tags:
             total_items=len(remaining_items),
             instance_name=self.config.instance_name,
             archived_items=archived,
+            created_reference_notes=list(self.created_reference_notes),
             logged_to_workshop=logged,
             dry_run=dry_run,
             items=remaining_items,
@@ -455,6 +688,7 @@ def render_terminal_report(report: DrainReport) -> str:
         f"Katalog Skrzynki:  {report.inbox_path}",
         f"Elementy w toku:   {report.total_items} nieprzetworzonych",
         f"Zarchiwizowane:    {len(report.archived_items)} elementów",
+        f"Karty w Zasobach:  {len(report.created_reference_notes)} utworzonych",
         f"Zapis w Warsztacie:{'TAK' if report.logged_to_workshop else 'NIE'}",
         f"Tryb Dry-Run:      {'TAK' if report.dry_run else 'NIE'}",
         "-" * 64,
@@ -464,6 +698,12 @@ def render_terminal_report(report: DrainReport) -> str:
         lines.append("ZARCHIWIZOWANE ELEMENTY:")
         for name in report.archived_items:
             lines.append(f"  ✓ {name}")
+        lines.append("-" * 64)
+
+    if report.created_reference_notes:
+        lines.append("UTWORZONE KARTY REFERENCYJNE (06 Zasoby/Notatki/):")
+        for ref in report.created_reference_notes:
+            lines.append(f"  ★ {ref}")
         lines.append("-" * 64)
 
     if not report.items:

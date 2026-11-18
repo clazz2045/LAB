@@ -789,5 +789,155 @@ class TestGovernanceAndWorkflowHelpers(BaseSandboxTest):
         self.assertIn("PR-999 Test", warnings[0])
 
 
+class TestWisprUrlIngestVariantB(BaseSandboxTest):
+    """Testy automatycznego ingestu URL ze zrzutów Wispr Flow (Wariant B)."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.config_path = self.vault_root / "lab.config.toml"
+        self.inbox_dir = self.sandbox_dir / "01 Skrzynka"
+        self.inbox_dir.mkdir(parents=True, exist_ok=True)
+        self.assets_notes_dir = self.sandbox_dir / "06 Zasoby" / "Notatki"
+        self.assets_notes_dir.mkdir(parents=True, exist_ok=True)
+        self.workshop_archive_dir = self.sandbox_dir / "02 Warsztat" / "_archiwum" / "2026" / "11"
+        self.workshop_archive_dir.mkdir(parents=True, exist_ok=True)
+
+        self.drainer = InboxDrainer(
+            vault_root=self.sandbox_dir,
+            config_path=self.config_path,
+        )
+
+    def test_wispr_flow_note_with_youtube_url_auto_ingests_to_assets(self) -> None:
+        """Zrzut Wispr z linkiem YouTube tworzy kartę referencyjną SAT w Zasobach i linkuje z Dziennikiem."""
+        from unittest.mock import patch
+        from check_quality import QualityChecker
+
+        test_file = self.inbox_dir / "Wispr_2026-11-18_1015_Wyklad_Kwantowy.md"
+        test_file.write_text(
+            "---\ntype: raw-capture\nsource: wispr-flow\n---\n"
+            "Cześć, obejrzyj ten wykład o teorii kwantowej: https://www.youtube.com/watch?v=Shor_Qubit_999\n"
+            "Koniecznie przeanalizuj omówienie algorytmu Shora w 10. minucie.",
+            encoding="utf-8",
+        )
+
+        mock_meta = {
+            "title": "Quantum Computation and Shor Algorithm",
+            "author": "Oxford Physics",
+            "url": "https://www.youtube.com/watch?v=Shor_Qubit_999",
+            "is_youtube": True,
+            "duration_formatted": "45m 20s",
+            "duration_seconds": 2720,
+            "description": "Comprehensive university lecture on quantum complexity and Shor algorithm.",
+            "transcript": "[00:00] Welcome to quantum computing lecture. [10:00] Here is Shor algorithm analysis.",
+        }
+
+        with patch("drain_inbox.fetch_resource_metadata", return_value=mock_meta):
+            dest_archive = self.drainer.archive_item(test_file.name)
+
+        # 1. Surowy plik zrzutu przeniesiony do archiwum Skrzynki
+        self.assertFalse(test_file.exists())
+        self.assertTrue(dest_archive.exists())
+        self.assertIn("01 Skrzynka", str(dest_archive))
+        self.assertIn("_archiwum", str(dest_archive))
+        self.assertTrue(str(dest_archive).startswith(str(self.sandbox_dir)))
+
+        # 2. Utworzona karta referencyjna w Zasobach
+        expected_note = self.assets_notes_dir / "Wideo – Quantum Computation and Shor Algorithm (Oxford Physics).md"
+        self.assertTrue(expected_note.exists(), f"Karta referencyjna {expected_note} powinna zostać utworzona.")
+        self.assertTrue(str(expected_note).startswith(str(self.sandbox_dir)))
+
+        note_content = expected_note.read_text(encoding="utf-8")
+        self.assertIn("type: note", note_content)
+        self.assertIn("note_type: reference", note_content)
+        self.assertIn("stage: distilled", note_content)
+        self.assertIn("consumed: false", note_content)
+        self.assertIn("source: https://www.youtube.com/watch?v=Shor_Qubit_999", note_content)
+        self.assertIn("## 🎙️ Notatka z dyktafonu / Refleksja Właściciela", note_content)
+        self.assertIn("Koniecznie przeanalizuj omówienie algorytmu Shora w 10. minucie.", note_content)
+        self.assertIn("[[2026-11-18|Dziennik Dnia: 2026-11-18]]", note_content)
+
+        # 3. Wpis w Dzienniku Dnia w Warsztacie
+        daily_journal = self.workshop_archive_dir / "2026-11-18.md"
+        self.assertTrue(daily_journal.exists())
+        self.assertTrue(str(daily_journal).startswith(str(self.sandbox_dir)))
+        journal_content = daily_journal.read_text(encoding="utf-8")
+        self.assertIn("Wispr: 2026-11-18_1015_Wyklad_Kwantowy", journal_content)
+        self.assertIn("📄 Karta w Zasobach: [[Wideo – Quantum Computation and Shor Algorithm (Oxford Physics)]]", journal_content)
+
+        # 4. Sprawdzenie zgodności jakościowej nowo utworzonej karty
+        checker = QualityChecker(vault_root=self.sandbox_dir, config_path=self.config_path)
+        checker._check_reference_notes_and_assets_hygiene()
+        errors = [
+            f.message for f in checker.findings
+            if expected_note.name in (f.path or "") and f.level == "error"
+        ]
+        self.assertEqual(len(errors), 0, f"Utworzona karta nie powinna generować błędów jakości: {errors}")
+
+    def test_wispr_flow_note_offline_fallback(self) -> None:
+        """W trybie offline (błąd sieci) powstaje karta fallback ze stage: distilled i consumed: false."""
+        from unittest.mock import patch
+        from check_quality import QualityChecker
+
+        test_file = self.inbox_dir / "Wispr_2026-11-18_1100_Offline_Article.md"
+        test_file.write_text(
+            "---\ntype: raw-capture\nsource: wispr-flow\n---\n"
+            "Artykuł offline: https://example.org/docs/deep-dive\n"
+            "Do przeczytania w pociągu bez internetu.",
+            encoding="utf-8",
+        )
+
+        with patch("drain_inbox.fetch_resource_metadata", side_effect=Exception("Network Timeout 5s")):
+            dest_archive = self.drainer.archive_item(test_file.name)
+
+        self.assertFalse(test_file.exists())
+        self.assertTrue(dest_archive.exists())
+        self.assertTrue(str(dest_archive).startswith(str(self.sandbox_dir)))
+
+        # Karta referencyjna fallback
+        matching_notes = list(self.assets_notes_dir.glob("*example.org*.md"))
+        self.assertTrue(len(matching_notes) > 0, "Powinna powstać karta fallback w Zasobach.")
+        note_p = matching_notes[0]
+        self.assertTrue(str(note_p).startswith(str(self.sandbox_dir)))
+
+        content = note_p.read_text(encoding="utf-8")
+        self.assertIn("stage: distilled", content)
+        self.assertIn("consumed: false", content)
+        self.assertIn("## 🎙️ Notatka z dyktafonu / Refleksja Właściciela", content)
+        self.assertIn("Do przeczytania w pociągu bez internetu.", content)
+        self.assertIn("[[2026-11-18|Dziennik Dnia: 2026-11-18]]", content)
+
+        # 4. Sprawdzenie zgodności jakościowej utworzonej karty fallback przez QualityChecker
+        checker = QualityChecker(vault_root=self.sandbox_dir, config_path=self.config_path)
+        checker._check_reference_notes_and_assets_hygiene()
+        errors = [
+            f.message for f in checker.findings
+            if note_p.name in (f.path or "") and f.level == "error"
+        ]
+        self.assertEqual(len(errors), 0, f"Utworzona karta fallback nie powinna generować błędów jakości: {errors}")
+
+    def test_wispr_flow_note_no_duplicates_when_card_exists(self) -> None:
+        """Jeśli karta dla danego URL już istnieje w Zasobach, drenaż nie tworzy duplikatu."""
+        existing_card = self.assets_notes_dir / "Wideo – Istniejacy Material (Autor).md"
+        existing_card.write_text(
+            "---\ntype: note\nnote_type: reference\nstage: distilled\ncreated: 2026-11-18\n"
+            "source_url: https://www.youtube.com/watch?v=EXISTING123\nconsumed: false\n---\n"
+            "# Wideo – Istniejacy Material\n\n> [!info] Metadane źródłowe\n\n## 💡 Esencja\nTreść\n\n## 🔗 Powiązania\n- [[06 Zasoby/Notatki]]\n",
+            encoding="utf-8",
+        )
+
+        test_file = self.inbox_dir / "Wispr_2026-11-18_1200_Duplicate.md"
+        test_file.write_text(
+            "---\ntype: raw-capture\nsource: wispr-flow\n---\n"
+            "Kolejny zrzut z tym samym filmem https://www.youtube.com/watch?v=EXISTING123",
+            encoding="utf-8",
+        )
+
+        initial_notes_count = len(list(self.assets_notes_dir.glob("*.md")))
+        dest_archive = self.drainer.archive_item(test_file.name)
+
+        final_notes_count = len(list(self.assets_notes_dir.glob("*.md")))
+        self.assertEqual(initial_notes_count, final_notes_count, "Liczba notatek w Zasobach nie powinna wzrosnąć (brak duplikatu).")
+
+
 if __name__ == "__main__":
     unittest.main()

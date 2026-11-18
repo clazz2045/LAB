@@ -71,6 +71,7 @@ class SessionReceipt:
     agenda_check: Dict[str, Any] = field(default_factory=dict)
     warnings: List[str] = field(default_factory=list)
     telemetry: Dict[str, Any] = field(default_factory=dict)
+    handoff: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -88,6 +89,52 @@ class ComplianceAnnotationRequired(Exception):
     def __init__(self, report: Dict[str, Any]) -> None:
         super().__init__("; ".join(report.get("violations", [])))
         self.report = report
+
+
+class HandoffValidationError(Exception):
+    """Wymagane podanie konkretnego punktu startowego (handoff) dla kolejnej sesji."""
+
+
+def validate_handoff(handoff: Optional[str]) -> Tuple[bool, Optional[str]]:
+    """Deterministyczna walidacja punktu startowego sesji N+1 (Fail-Closed)."""
+    error_msg = "BŁĄD CHECKPOINTU: Wymagane podanie konkretnego punktu startowego (handoff) dla kolejnej sesji."
+    if not handoff or not handoff.strip():
+        return False, error_msg
+
+    text = handoff.strip()
+    if len(text) < 25:
+        return False, error_msg
+
+    # Odrzucenie generycznych placeholderów
+    cleaned = re.sub(
+        r"(?:przegląd agendy(?: roboczej dnia)?(?: na otwarcie kolejnej sesji)?|"
+        r"kontynuacja prac(?: zgodnie z planem)?|"
+        r"dalsze prace(?: nad projektem)?|"
+        r"do zrobienia w kolejnej sesji|"
+        r"start kolejnej sesji|"
+        r"todo|"
+        r"[\s\-\[\]\.\,\:\;])",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if len(cleaned) < 15:
+        return False, error_msg
+
+    return True, None
+
+
+def extract_handoff_from_log_content(content: str) -> Optional[str]:
+    """Wyodrębnia treść sekcji 4 (Handoff lub Zadania Otwarte) z treści Dziennika Sesji."""
+    m = re.search(
+        r"^## 4\.\s*(?:Punkt Startowy Kolejnej Sesji \(Handoff\)|Zadania Otwarte i Następne Kroki)\s*\n(.*?)(?=\n## |\Z)",
+        content,
+        re.MULTILINE | re.DOTALL,
+    )
+    if m:
+        body = m.group(1).strip()
+        return body if body else None
+    return None
 
 
 class SessionCheckpoint:
@@ -332,6 +379,7 @@ class SessionCheckpoint:
         dry_run: bool = False,
         compliance: Optional[Dict[str, Any]] = None,
         violation_note: Optional[str] = None,
+        handoff: str = "",
     ) -> Tuple[Path, str, List[str]]:
         """
         Tworzy plik dziennika sesji w '08 Zespół AI/Dzienniki Sesji/YYYY/MM/'.
@@ -395,6 +443,8 @@ class SessionCheckpoint:
                 f"{viol}\n- Adnotacja Koordynatora: {violation_note or '(brak)'}"
             )
 
+        handoff_body = handoff.strip() if handoff and handoff.strip() else "- *(Brak wskazanego punktu startowego)*"
+
         content = f"""---
 type: session-log
 session_id: "{session_id}"
@@ -440,8 +490,8 @@ Zamknięcie okna roboczego sesji, synchronizacja stanu i weryfikacja integralno�
 
 ---
 
-## 4. Zadania Otwarte i Następne Kroki
-- [ ] Przegląd Agendy Roboczej Dnia na otwarcie kolejnej sesji.
+## 4. Punkt Startowy Kolejnej Sesji (Handoff)
+{handoff_body}
 """
 
         if not dry_run:
@@ -456,12 +506,44 @@ Zamknięcie okna roboczego sesji, synchronizacja stanu i weryfikacja integralno�
         dry_run: bool = False,
         transcript_path: Optional[Union[str, Path]] = None,
         violation_note: Optional[str] = None,
+        handoff: Optional[str] = None,
     ) -> SessionReceipt:
         """Przeprowadza pełen proces checkpointu: weryfikacja jakości, audyt zgodności, log sesji i kwit.
 
         Naruszenie Reguły 8 wykryte w transkrypcie wymaga adnotacji (violation_note); bez niej
         rzuca ComplianceAnnotationRequired i nie zapisuje dziennika.
+        Wymaga deterministycznego, konkretnego punktu startowego dla sesji N+1 (Fail-Closed).
         """
+        now = datetime.datetime.now()
+        resolved_handoff: Optional[str] = None
+
+        if handoff is not None:
+            valid, err = validate_handoff(handoff)
+            if not valid:
+                raise HandoffValidationError(
+                    err or "BŁĄD CHECKPOINTU: Wymagane podanie konkretnego punktu startowego (handoff) dla kolejnej sesji."
+                )
+            resolved_handoff = handoff.strip()
+        else:
+            # Sprawdź czy plik dziennika sesji już istnieje na dysku i zawiera poprawny handoff
+            log_dir = self.get_session_logs_dir(now)
+            clean_slug = re.sub(r"[^a-zA-Z0-9_\-]+", "-", slug.strip().lower()).strip("-") or "checkpoint"
+            try:
+                coord_slug = self.config.get_agent_name("coordinator").lower()
+            except Exception:
+                coord_slug = "koordynator"
+            candidate_file = log_dir / f"{now.strftime('%Y-%m-%d-%H-%M')}_{coord_slug}_{clean_slug}.md"
+            if candidate_file.is_file():
+                extracted = extract_handoff_from_log_content(candidate_file.read_text(encoding="utf-8"))
+                valid, _ = validate_handoff(extracted)
+                if valid and extracted:
+                    resolved_handoff = extracted.strip()
+
+        if not resolved_handoff:
+            raise HandoffValidationError(
+                "BŁĄD CHECKPOINTU: Wymagane podanie konkretnego punktu startowego (handoff) dla kolejnej sesji."
+            )
+
         compliance: Dict[str, Any] = {}
         t_path = Path(transcript_path).expanduser().resolve() if transcript_path else None
         if t_path is None:
@@ -483,7 +565,6 @@ Zamknięcie okna roboczego sesji, synchronizacja stanu i weryfikacja integralno�
                 vault_status = "attention"
 
         # 2. Utwórz wpis dziennika sesji
-        now = datetime.datetime.now()
         log_file, session_id, modified_files = self.create_session_log(
             slug=slug,
             hours=hours,
@@ -492,6 +573,7 @@ Zamknięcie okna roboczego sesji, synchronizacja stanu i weryfikacja integralno�
             dry_run=dry_run,
             compliance=compliance,
             violation_note=violation_note,
+            handoff=resolved_handoff,
         )
 
         if compliance and not dry_run:
@@ -559,6 +641,7 @@ Zamknięcie okna roboczego sesji, synchronizacja stanu i weryfikacja integralno�
             agenda_check=agenda_check,
             warnings=warnings,
             telemetry=telemetry_dict,
+            handoff=resolved_handoff,
         )
 
         return receipt
@@ -623,10 +706,17 @@ def render_terminal_receipt(receipt: SessionReceipt) -> str:
         f"Status Skarbca:    {receipt.vault_status.upper()}",
         f"Podpis cyfrowy:    {receipt.signature}",
         f"Zgodność Reguły 8: {receipt.compliance.get('status', 'niewykonany (brak transkryptu)').upper()}",
+    ]
+    if receipt.handoff:
+        short_handoff = receipt.handoff.replace("\n", " ").strip()
+        if len(short_handoff) > 55:
+            short_handoff = short_handoff[:52] + "..."
+        lines.append(f"Punkt startowy:     {short_handoff}")
+    lines.extend([
         "-" * 64,
         "SESJA ZAMKNIĘTA I ZAPISANA W DZIENNIKU",
         "=" * 64,
-    ]
+    ])
     if receipt.agenda_check:
         lines.append(render_agenda_reminder(receipt.agenda_check))
         lines.append("=" * 64)
@@ -668,6 +758,7 @@ def main() -> int:
     parser.add_argument("--full-files", action="store_true", help="W trybie --json wypisz pełną listę files_touched (domyślnie max 10)")
     parser.add_argument("--transcript-path", default=None, help="transcript.jsonl sesji głównej (lub LAB_TRANSCRIPT_PATH) do audytu zgodności")
     parser.add_argument("--violation-note", default=None, help="Adnotacja wymagana, gdy audyt wykryje naruszenie Reguły 8")
+    parser.add_argument("--handoff", default=None, help="Konkretny punkt startowy (handoff) dla kolejnej sesji (min. 25 znaków)")
     args = parser.parse_args()
 
     try:
@@ -702,7 +793,14 @@ def main() -> int:
         receipt = cp.run_checkpoint(
             slug=args.slug, hours=args.hours, dry_run=args.dry_run,
             transcript_path=args.transcript_path, violation_note=args.violation_note,
+            handoff=args.handoff,
         )
+    except HandoffValidationError as ex:
+        if args.json:
+            print(json.dumps({"status": "error", "message": str(ex)}, indent=2, ensure_ascii=False))
+        else:
+            print(f"[BŁĄD] {ex}", file=sys.stderr)
+        return 2
     except ComplianceAnnotationRequired as ex:
         print("[CHECKPOINT ZABLOKOWANY] Wykryto naruszenie Reguły 8 w sesji głównej:", file=sys.stderr)
         for v in ex.report.get("violations", []):

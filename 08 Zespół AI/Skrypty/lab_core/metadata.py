@@ -35,6 +35,20 @@ DEFAULT_USER_AGENT = (
 )
 
 YOUTUBE_DOMAINS = {"youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"}
+URL_REGEX = re.compile(r'https?://[^\s)\]>"\']+', re.IGNORECASE)
+
+
+def extract_urls(text: str) -> List[str]:
+    """Wydobywa listę unikalnych adresów URL http/https z tekstu Markdown, oczyszczając interpunkcję."""
+    if not text:
+        return []
+    matches = URL_REGEX.findall(text)
+    urls: List[str] = []
+    for m in matches:
+        cleaned = m.rstrip(".,;:!?)>]}\"'")
+        if cleaned and cleaned not in urls:
+            urls.append(cleaned)
+    return urls
 
 
 def extract_youtube_video_id(url: str) -> Optional[str]:
@@ -623,6 +637,7 @@ def generate_reference_note_content(
     body_text: Optional[str] = None,
     created_date: Optional[str] = None,
     vault_root: Optional[Path] = None,
+    human_thought: Optional[str] = None,
 ) -> str:
     """
     Generuje notatkę referencyjną SAT na podstawie kanonicznego pliku szablonu (SSOT).
@@ -740,6 +755,16 @@ def generate_reference_note_content(
     rendered = tpl_text
     for key, val in replacements.items():
         rendered = rendered.replace(key, val)
+
+    if human_thought and human_thought.strip():
+        human_block = f"\n---\n\n## 🎙️ Notatka z dyktafonu / Refleksja Właściciela\n\n{human_thought.strip()}\n"
+        links_match = re.search(r"(\r?\n---\r?\n\r?\n##\s+🔗)", rendered)
+        if links_match:
+            pos = links_match.start()
+            rendered = rendered[:pos] + human_block + rendered[pos:]
+        else:
+            rendered = rendered.rstrip() + human_block
+
     return rendered
 
 

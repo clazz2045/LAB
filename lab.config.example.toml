@@ -20,6 +20,11 @@ root_var = "VAULT_ROOT"
 relative_mode = true
 root_indicator = "lab.config.toml"
 
+[storage.code_layout]
+canonical_engine = "08 Zespół AI/Skrypty"
+workshop_tools = "02 Warsztat/Skrypty"
+projects_pattern = "03 Projekty/{project_id}/**"
+
 [vcs]
 enabled = false
 provider = "github"

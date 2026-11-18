@@ -446,7 +446,7 @@ class TestSessionDelegationDiscipline(unittest.TestCase):
 
         tmp, vault, past_ts = self._setup_session_vault()
         try:
-            script_file = vault / "08 Zespół AI" / "Skrypty" / "lab_core" / "sample_mod.py"
+            script_file = vault / "08 Zespół AI" / "Skrypty" / "lab_core" / "env.py"
             script_file.parent.mkdir(parents=True, exist_ok=True)
             script_file.write_text("# sample\n", encoding="utf-8")
             os.utime(script_file, (past_ts + 30.0, past_ts + 30.0))
@@ -494,7 +494,7 @@ class TestSessionDelegationDiscipline(unittest.TestCase):
 
         tmp, vault, past_ts = self._setup_session_vault()
         try:
-            script_file = vault / "08 Zespół AI" / "Skrypty" / "lab_core" / "sample_mod.py"
+            script_file = vault / "08 Zespół AI" / "Skrypty" / "lab_core" / "env.py"
             script_file.parent.mkdir(parents=True, exist_ok=True)
             script_file.write_text("# sample\n", encoding="utf-8")
             os.utime(script_file, (past_ts + 30.0, past_ts + 30.0))
@@ -526,7 +526,7 @@ class TestSessionDelegationDiscipline(unittest.TestCase):
 
         tmp, vault, past_ts = self._setup_session_vault()
         try:
-            script_file = vault / "08 Zespół AI" / "Skrypty" / "lab_core" / "sample_mod.py"
+            script_file = vault / "08 Zespół AI" / "Skrypty" / "lab_core" / "env.py"
             script_file.parent.mkdir(parents=True, exist_ok=True)
             script_file.write_text("# sample\n", encoding="utf-8")
             os.utime(script_file, (past_ts + 30.0, past_ts + 30.0))

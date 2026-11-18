@@ -345,7 +345,13 @@ class TestCheckpointIntegration(unittest.TestCase):
         )
 
         cp = SessionCheckpoint(vault_root=self.vault)
-        receipt = cp.run_checkpoint(slug="telemetry-test", hours=1.0, dry_run=False, transcript_path=t_path)
+        receipt = cp.run_checkpoint(
+            slug="telemetry-test",
+            hours=1.0,
+            dry_run=False,
+            transcript_path=t_path,
+            handoff="Weryfikacja telemetrii i kwitu sesji w bazie",
+        )
 
         self.assertTrue(receipt.telemetry)
         self.assertEqual(receipt.telemetry["session_id"], cid)

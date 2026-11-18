@@ -5,6 +5,7 @@ Standard: 100% Python Standard Library. Zero-Pip.
 from __future__ import annotations
 
 from .assets import AssetsAndReferencesInspector
+from .engine_purity import EnginePurityInspector
 from .governance_style import GovernanceStyleInspector
 from .inbox import InboxInspector
 from .management import ManagementFilesInspector
@@ -28,4 +29,5 @@ __all__ = [
     "SubagentsPolicyInspector",
     "GovernanceStyleInspector",
     "PortabilityInspector",
+    "EnginePurityInspector",
 ]

@@ -2,7 +2,7 @@
 
 Weryfikuje:
   1. Fast-Path subagentów (<2 ms, paszport natychmiastowy bez blokad).
-  2. Otwarty model Read-Only (read_file / view_file) dla Koordynatora w sesji głównej.
+  2. Ścisłą białą listę odczytu dla Koordynatora (Zero Code Reading in Main) oraz licznik odczytów w czasie rzeczywistym (max 2).
   3. Białą listę zapisu Koordynatora (Agenda, Dashboard, brain/tmp) oraz twardą blokadę zapisu
      plików produkcyjnych (kod, projekty, baza wiedzy).
   4. Blokadę narzędzi zwiadu powłokowego (cat, grep, find, awk) oraz chainingu (&&, |).
@@ -28,18 +28,24 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from lab_core.pre_tool_guard import (
+    COORDINATOR_READ_LIMIT,
     DENY_REASON_COMMAND,
     DENY_REASON_RECON,
     DENY_REASON_RESEARCH_MODEL,
     DENY_REASON_SUBAGENT_MISSING_MODEL,
     DENY_REASON_WRITE,
+    DENY_REASON_READ_CODE,
+    DENY_REASON_READ_LIMIT,
+    DENY_REASON_READ_WHITELIST,
     evaluate_pre_tool,
     is_allowed_coordinator_command,
+    is_allowed_coordinator_read,
     is_allowed_coordinator_subagent,
     is_allowed_coordinator_write,
     is_subagent_session,
     main,
     normalize_target_path,
+    reset_coordinator_read_counter,
 )
 
 
@@ -111,22 +117,27 @@ class TestSubagentFastPath(unittest.TestCase):
 
 
 class TestCoordinatorReadGuard(unittest.TestCase):
-    """Testy uprawnień odczytu (read_file) dla sesji Koordynatora."""
+    """Testy uprawnień odczytu (read_file / view_file) oraz białej listy ścieżek dla sesji Koordynatora."""
 
     def setUp(self) -> None:
         self.temp_vault = Path(tempfile.mkdtemp(prefix="lab_vault_test_"))
+        self.state_file = self.temp_vault / "read_state.json"
         (self.temp_vault / "02 Warsztat").mkdir(parents=True)
         (self.temp_vault / "03 Projekty").mkdir(parents=True)
         (self.temp_vault / "05 Baza Wiedzy").mkdir(parents=True)
         (self.temp_vault / "08 Zespół AI" / "Role" / "Koordynator").mkdir(parents=True)
-        (self.temp_vault / "08 Zespół AI" / "Skrypty").mkdir(parents=True)
+        (self.temp_vault / "08 Zespół AI" / "Dzienniki Sesji" / "2026" / "11").mkdir(parents=True)
+        (self.temp_vault / "08 Zespół AI" / "Skrypty" / "tests").mkdir(parents=True)
 
         (self.temp_vault / "AGENTS.md").write_text("# AGENTS", encoding="utf-8")
         (self.temp_vault / "GEMINI.md").write_text("# GEMINI", encoding="utf-8")
         (self.temp_vault / "lab.config.toml").write_text("[vault]", encoding="utf-8")
         (self.temp_vault / "02 Warsztat" / "2026-11-12 – Agenda Robocza.md").write_text("# Agenda", encoding="utf-8")
         (self.temp_vault / "02 Warsztat" / "Dashboard LAB.md").write_text("# Dashboard", encoding="utf-8")
-        (self.temp_vault / "08 Zespół AI" / "Role" / "Koordynator" / "AGENT.md").write_text("# Koordynator", encoding="utf-8")
+        (self.temp_vault / "02 Warsztat" / "Notatka robocza.md").write_text("# Notatka", encoding="utf-8")
+        (self.temp_vault / "08 Zespół AI" / "Dzienniki Sesji" / "2026" / "11" / "session.md").write_text("# Dziennik", encoding="utf-8")
+        (self.temp_vault / "08 Zespół AI" / "Skrypty" / "session_bootstrap.py").write_text("# Code", encoding="utf-8")
+        (self.temp_vault / "08 Zespół AI" / "Skrypty" / "tests" / "test_dummy.py").write_text("# Test", encoding="utf-8")
 
         # Koordynator: krok 0 to USER_EXPLICIT
         self.coord_transcript = self.temp_vault / "transcript.jsonl"
@@ -138,31 +149,208 @@ class TestCoordinatorReadGuard(unittest.TestCase):
     def tearDown(self) -> None:
         shutil.rmtree(self.temp_vault, ignore_errors=True)
 
-    def test_read_only_allows_single_file_reads_for_coordinator(self) -> None:
-        """Koordynator w sesji głównej może czytać dowolne pliki (model Read-Only, brak blokady read_file)."""
-        paths = [
+    def test_allowed_whitelist_reads_for_coordinator(self) -> None:
+        """Koordynator może czytać wyłącznie pliki Agendy, Dzienników Sesji, Warsztatu oraz sesji."""
+        allowed_paths = [
             "02 Warsztat/2026-11-12 – Agenda Robocza.md",
             "02 Warsztat/Dashboard LAB.md",
-            "AGENTS.md",
-            "GEMINI.md",
-            "lab.config.toml",
-            "08 Zespół AI/Role/Koordynator/AGENT.md",
-            "08 Zespół AI/Skrypty/session_bootstrap.py",
-            "05 Baza Wiedzy/Architektura.md",
-            "03 Projekty/PR-017 LAB 3.0/Produkt/file.md",
-            "04 Operacje/Procedury/SOP.md",
-            "06 Zasoby/Notatki/ref.md",
+            "02 Warsztat/Notatka robocza.md",
+            "08 Zespół AI/Dzienniki Sesji/2026/11/session.md",
             "/tmp/temp_debug.txt",
             str(Path.home() / ".gemini" / "antigravity" / "brain" / "session-123" / "transcript.jsonl"),
         ]
-        for path_str in paths:
+        for path_str in allowed_paths:
+            # Reset stanu licznika przed każdym sprawdzeniem ścieżki
+            reset_coordinator_read_counter(state_file=self.state_file)
             for tool_name in ("read_file", "view_file"):
                 payload = {
                     "toolCall": {"name": tool_name, "args": {"Path": path_str}},
                     "transcriptPath": str(self.coord_transcript),
                 }
-                res = evaluate_pre_tool(payload, vault_root=self.temp_vault)
-                self.assertEqual(res.get("decision"), "allow", f"Should allow {tool_name} for {path_str}")
+                res = evaluate_pre_tool(payload, vault_root=self.temp_vault, state_file=self.state_file)
+                self.assertEqual(res.get("decision"), "allow", f"Powinien zezwolić na odczyt {path_str}")
+
+    def test_zero_code_reading_in_main_session(self) -> None:
+        """Koordynator ma bezwzględny zakaz czytania plików kodu .py i testów w sesji głównej."""
+        code_paths = [
+            "08 Zespół AI/Skrypty/session_bootstrap.py",
+            "08 Zespół AI/Skrypty/checkpoint.py",
+            "08 Zespół AI/Skrypty/tests/test_dummy.py",
+            "08 Zespół AI/Skrypty/tests/anything.txt",
+        ]
+        for path_str in code_paths:
+            reset_coordinator_read_counter(state_file=self.state_file)
+            for tool_name in ("read_file", "view_file"):
+                payload = {
+                    "toolCall": {"name": tool_name, "args": {"Path": path_str}},
+                    "transcriptPath": str(self.coord_transcript),
+                }
+                res = evaluate_pre_tool(payload, vault_root=self.temp_vault, state_file=self.state_file)
+                self.assertEqual(res.get("decision"), "deny", f"Powinien zablokować inspekcję kodu {path_str}")
+                self.assertIn("Koordynator nie ma uprawnień do inspekcji kodu w sesji głównej", res.get("reason", ""))
+
+    def test_disallowed_non_whitelist_files(self) -> None:
+        """Koordynator ma zakaz czytania bazy wiedzy, projektów, operacji, zasobów i konfiguracji w sesji głównej."""
+        disallowed = [
+            "AGENTS.md",
+            "lab.config.toml",
+            "05 Baza Wiedzy/Architektura.md",
+            "03 Projekty/PR-017 LAB 3.0/Produkt/file.md",
+            "07 Bazy Danych/lab_master.db",
+        ]
+        for path_str in disallowed:
+            reset_coordinator_read_counter(state_file=self.state_file)
+            payload = {
+                "toolCall": {"name": "read_file", "args": {"Path": path_str}},
+                "transcriptPath": str(self.coord_transcript),
+            }
+            res = evaluate_pre_tool(payload, vault_root=self.temp_vault, state_file=self.state_file)
+            self.assertEqual(res.get("decision"), "deny", f"Powinien zablokować odczyt spoza białej listy: {path_str}")
+            self.assertIn("Koordynator może czytać wyłącznie pliki Agendy Roboczej", res.get("reason", ""))
+
+
+class TestCoordinatorReadCounterGuard(unittest.TestCase):
+    """Testy licznika odczytów w czasie rzeczywistym (max 2 odczyty przed delegacją)."""
+
+    def setUp(self) -> None:
+        self.temp_vault = Path(tempfile.mkdtemp(prefix="lab_vault_counter_test_"))
+        self.state_file = self.temp_vault / "read_state.json"
+        (self.temp_vault / "02 Warsztat").mkdir(parents=True)
+        (self.temp_vault / "02 Warsztat" / "2026-11-18 – Agenda Robocza.md").write_text("# Agenda", encoding="utf-8")
+        (self.temp_vault / "02 Warsztat" / "Dashboard LAB.md").write_text("# Dashboard", encoding="utf-8")
+        (self.temp_vault / "02 Warsztat" / "Notatka robocza.md").write_text("# Notatka", encoding="utf-8")
+
+        self.coord_transcript = self.temp_vault / "transcript.jsonl"
+        self.coord_transcript.write_text(
+            json.dumps({"step_index": 0, "source": "USER_EXPLICIT", "content": "Witaj"}) + "\n",
+            encoding="utf-8",
+        )
+        reset_coordinator_read_counter(state_file=self.state_file)
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.temp_vault, ignore_errors=True)
+
+    def test_read_limit_blocks_third_consecutive_read(self) -> None:
+        """Limit 2 kolejnych odczytów: 1. i 2. dozwolone, 3. próba zablokowana."""
+        p1 = {
+            "toolCall": {"name": "read_file", "args": {"Path": "02 Warsztat/2026-11-18 – Agenda Robocza.md"}},
+            "transcriptPath": str(self.coord_transcript),
+        }
+        p2 = {
+            "toolCall": {"name": "read_file", "args": {"Path": "02 Warsztat/Dashboard LAB.md"}},
+            "transcriptPath": str(self.coord_transcript),
+        }
+        p3 = {
+            "toolCall": {"name": "read_file", "args": {"Path": "02 Warsztat/Notatka robocza.md"}},
+            "transcriptPath": str(self.coord_transcript),
+        }
+
+        # Odczyt 1 -> OK
+        res1 = evaluate_pre_tool(p1, vault_root=self.temp_vault, state_file=self.state_file)
+        self.assertEqual(res1.get("decision"), "allow")
+
+        # Odczyt 2 -> OK
+        res2 = evaluate_pre_tool(p2, vault_root=self.temp_vault, state_file=self.state_file)
+        self.assertEqual(res2.get("decision"), "allow")
+
+        # Odczyt 3 -> BLOKADA REGUŁY 8
+        res3 = evaluate_pre_tool(p3, vault_root=self.temp_vault, state_file=self.state_file)
+        self.assertEqual(res3.get("decision"), "deny")
+        self.assertIn("Wykorzystano limit 2 odczytów w sesji głównej", res3.get("reason", ""))
+        self.assertIn("Zastosuj zasadę Stop & Ask", res3.get("reason", ""))
+
+    def test_invoke_subagent_resets_read_counter(self) -> None:
+        """Wywołanie invoke_subagent resetuje licznik odczytów."""
+        p_read = {
+            "toolCall": {"name": "read_file", "args": {"Path": "02 Warsztat/2026-11-18 – Agenda Robocza.md"}},
+            "transcriptPath": str(self.coord_transcript),
+        }
+        p_invoke = {
+            "toolCall": {
+                "name": "invoke_subagent",
+                "args": {"TypeName": "research", "Model": "flash", "Role": "Badacz", "Prompt": "Zbadaj X"},
+            },
+            "transcriptPath": str(self.coord_transcript),
+        }
+
+        # 2 odczyty
+        self.assertEqual(evaluate_pre_tool(p_read, vault_root=self.temp_vault, state_file=self.state_file).get("decision"), "allow")
+        self.assertEqual(evaluate_pre_tool(p_read, vault_root=self.temp_vault, state_file=self.state_file).get("decision"), "allow")
+
+        # 3. odczyt zablokowany
+        self.assertEqual(evaluate_pre_tool(p_read, vault_root=self.temp_vault, state_file=self.state_file).get("decision"), "deny")
+
+        # Koordynator deleguje zadanie do subagenta
+        self.assertEqual(evaluate_pre_tool(p_invoke, vault_root=self.temp_vault, state_file=self.state_file).get("decision"), "allow")
+
+        # Licznik zresetowany -> kolejny odczyt ponownie dozwolony
+        self.assertEqual(evaluate_pre_tool(p_read, vault_root=self.temp_vault, state_file=self.state_file).get("decision"), "allow")
+
+    def test_switching_transcript_resets_counter_and_last_user_idx(self) -> None:
+        """Przełączenie transcript_path na nową sesję resetuje licznik i last_user_step_idx."""
+        # Sesja 1: długi transkrypt z wejściem użytkownika na kroku 10
+        tr1 = self.temp_vault / "transcript_session1.jsonl"
+        lines1 = [
+            json.dumps({"step_index": i, "source": "SYSTEM", "content": f"msg {i}"})
+            for i in range(10)
+        ]
+        lines1.append(json.dumps({"step_index": 10, "source": "USER_EXPLICIT", "type": "USER_INPUT", "content": "Sesja 1"}))
+        tr1.write_text("\n".join(lines1) + "\n", encoding="utf-8")
+
+        p_read_s1 = {
+            "toolCall": {"name": "read_file", "args": {"Path": "02 Warsztat/2026-11-18 – Agenda Robocza.md"}},
+            "transcriptPath": str(tr1),
+        }
+
+        # Wykorzystaj 2 odczyty w Sesji 1
+        self.assertEqual(evaluate_pre_tool(p_read_s1, vault_root=self.temp_vault, state_file=self.state_file).get("decision"), "allow")
+        self.assertEqual(evaluate_pre_tool(p_read_s1, vault_root=self.temp_vault, state_file=self.state_file).get("decision"), "allow")
+        # Trzeci zablokowany
+        self.assertEqual(evaluate_pre_tool(p_read_s1, vault_root=self.temp_vault, state_file=self.state_file).get("decision"), "deny")
+
+        # Sesja 2: nowa sesja z wejściem użytkownika na kroku 0 (indeks mniejszy niż 10 z poprzedniej sesji)
+        tr2 = self.temp_vault / "transcript_session2.jsonl"
+        tr2.write_text(
+            json.dumps({"step_index": 0, "source": "USER_EXPLICIT", "type": "USER_INPUT", "content": "Sesja 2"}) + "\n",
+            encoding="utf-8",
+        )
+
+        p_read_s2 = {
+            "toolCall": {"name": "read_file", "args": {"Path": "02 Warsztat/2026-11-18 – Agenda Robocza.md"}},
+            "transcriptPath": str(tr2),
+        }
+
+        # W nowej sesji licznik musi być zresetowany do 0 i zezwolić na odczyt
+        res = evaluate_pre_tool(p_read_s2, vault_root=self.temp_vault, state_file=self.state_file)
+        self.assertEqual(res.get("decision"), "allow", "Nowa sesja powinna zresetować licznik pomimo niższego indeksu kroku")
+
+    def test_new_user_message_in_transcript_resets_read_counter(self) -> None:
+        """Nowy krok USER_EXPLICIT w bieżącym transkrypcie resetuje licznik odczytów."""
+        tr = self.temp_vault / "transcript_turns.jsonl"
+        tr.write_text(
+            json.dumps({"step_index": 0, "source": "USER_EXPLICIT", "type": "USER_INPUT", "content": "Tura 1"}) + "\n",
+            encoding="utf-8",
+        )
+
+        p_read = {
+            "toolCall": {"name": "read_file", "args": {"Path": "02 Warsztat/2026-11-18 – Agenda Robocza.md"}},
+            "transcriptPath": str(tr),
+        }
+
+        # 2 odczyty w turze 1 -> OK
+        self.assertEqual(evaluate_pre_tool(p_read, vault_root=self.temp_vault, state_file=self.state_file).get("decision"), "allow")
+        self.assertEqual(evaluate_pre_tool(p_read, vault_root=self.temp_vault, state_file=self.state_file).get("decision"), "allow")
+        # 3. odczyt -> zablokowany
+        self.assertEqual(evaluate_pre_tool(p_read, vault_root=self.temp_vault, state_file=self.state_file).get("decision"), "deny")
+
+        # Użytkownik odpowiada na czacie (krok 1: MODEL, krok 2: USER_EXPLICIT)
+        with open(tr, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"step_index": 1, "source": "MODEL", "content": "Pytanie do człowieka"}) + "\n")
+            f.write(json.dumps({"step_index": 2, "source": "USER_EXPLICIT", "type": "USER_INPUT", "content": "Odpowiedź człowieka"}) + "\n")
+
+        # Nowa tura po odpowiedzi człowieka -> licznik zresetowany, odczyt dozwolony
+        res = evaluate_pre_tool(p_read, vault_root=self.temp_vault, state_file=self.state_file)
+        self.assertEqual(res.get("decision"), "allow", "Nowy krok użytkownika powinien zresetować licznik odczytów")
 
 
 class TestCoordinatorWriteGuard(unittest.TestCase):
@@ -318,7 +506,7 @@ class TestFailSafeFallback(unittest.TestCase):
 
     def test_missing_transcript_handled_safely(self) -> None:
         payload = {
-            "toolCall": {"name": "read_file", "args": {"Path": "AGENTS.md"}},
+            "toolCall": {"name": "read_file", "args": {"Path": "02 Warsztat/Dashboard LAB.md"}},
             "transcriptPath": "/nieistniejaca/sciezka/transcript.jsonl",
         }
         res = evaluate_pre_tool(payload)

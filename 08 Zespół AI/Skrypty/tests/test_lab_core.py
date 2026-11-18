@@ -245,6 +245,7 @@ class TestLabCoreQuality(unittest.TestCase):
             SubagentsPolicyInspector,
             GovernanceStyleInspector,
             PortabilityInspector,
+            EnginePurityInspector,
         )
         inspectors = [
             RoomsInspector(),
@@ -258,8 +259,9 @@ class TestLabCoreQuality(unittest.TestCase):
             SubagentsPolicyInspector(),
             GovernanceStyleInspector(),
             PortabilityInspector(),
+            EnginePurityInspector(),
         ]
-        self.assertEqual(len(inspectors), 11)
+        self.assertEqual(len(inspectors), 12)
         for insp in inspectors:
             self.assertTrue(hasattr(insp, "name"))
             self.assertTrue(callable(insp.inspect))
@@ -268,7 +270,7 @@ class TestLabCoreQuality(unittest.TestCase):
         from check_quality import QualityChecker
         root = find_vault_root(_current_dir)
         checker = QualityChecker(vault_root=root)
-        self.assertEqual(len(checker.inspectors), 11)
+        self.assertEqual(len(checker.inspectors), 12)
         report = checker.check_all()
         self.assertIn(report.status, {"ok", "attention"})
         self.assertEqual(report.rooms_count, 8)

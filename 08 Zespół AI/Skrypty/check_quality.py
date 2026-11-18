@@ -32,6 +32,7 @@ from lab_core import (
 )
 from lab_core.quality import (
     AssetsAndReferencesInspector,
+    EnginePurityInspector,
     Finding,
     GovernanceStyleInspector,
     InboxInspector,
@@ -80,6 +81,7 @@ class QualityChecker:
             SubagentsPolicyInspector(),
             GovernanceStyleInspector(),
             PortabilityInspector(),
+            EnginePurityInspector(),
         ]
 
     def check_all(self, strict_checkpoint: bool = False, audit_legacy: bool = False) -> QualityReport:
@@ -214,6 +216,7 @@ def render_terminal_report(
         f"  - Warsztat (zadania PR/OP):      {'🟢 CZYSTY' if report.stats.get('workshop_hygiene_clean') else '🔴 BŁĄD'}",
         f"  - Czystość Zasobów (SAT):      {report.stats.get('reference_notes_valid', 0)}/{report.stats.get('reference_notes', 0)} notatek ref. zgodnych (surowe zrzuty: {report.stats.get('raw_captures_in_assets', 0)}, nieopracowane stage:raw: {report.stats.get('raw_stage_notes', 0)}, dług historyczny legacy: {report.stats.get('legacy_notes_count', 0)})",
         f"  - Przenośność konfiguracji:    {'🟢 CZYSTA' if report.stats.get('portability_violations', 0) == 0 else '🔴 BŁĄD'}",
+        f"  - Czystość jądra (Allowlist):  {'🟢 CZYSTA' if report.stats.get('engine_purity_violations', 0) == 0 else '🔴 BŁĄD'}",
         "-" * 64,
     ]
 

@@ -418,6 +418,11 @@ relative_mode = true
 root_indicator = "lab.config.toml"
 icloud_sync = {"true" if icloud_enabled else "false"}
 
+[storage.code_layout]
+canonical_engine = "08 Zespół AI/Skrypty"
+workshop_tools = "02 Warsztat/Skrypty"
+projects_pattern = "03 Projekty/{{project_id}}/**"
+
 [vcs]
 enabled = {"true" if vcs_enabled else "false"}
 provider = "github"

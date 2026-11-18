@@ -8,22 +8,30 @@ import os
 from pathlib import Path
 
 from lab_core.constants import IGNORED_DIRS
+from lab_core.markdown import normalize_nfc
 from lab_core.quality.context import QualityContext, QualityInspector
 
 
 class ReadmesInspector(QualityInspector):
-    """Weryfikuje brak obcych plików README.md w pokojach (decyzja audytowa COO)."""
+    """Weryfikuje brak obcych plików README.md w pokojach (z wyjątkiem strefy narzędzi warsztatowych)."""
     name: str = "readmes"
 
     def inspect(self, ctx: QualityContext) -> None:
+        workshop_tools = getattr(getattr(ctx.config, "code_layout", None), "workshop_tools", "02 Warsztat/Skrypty")
+        allowed_readmes = {
+            normalize_nfc(f"{workshop_tools.strip('/')}/README.md").lower(),
+        }
+
         readmes_found = 0
         for root, dirs, files in os.walk(ctx.vault_root):
             dirs[:] = [d for d in dirs if d not in IGNORED_DIRS]
 
             for f in files:
                 if f.lower() == "readme.md":
-                    readmes_found += 1
                     rel_p = Path(root).relative_to(ctx.vault_root) / f
+                    if normalize_nfc(rel_p.as_posix()).lower() in allowed_readmes:
+                        continue
+                    readmes_found += 1
                     ctx.add_finding(
                         level="error",
                         category="readme",

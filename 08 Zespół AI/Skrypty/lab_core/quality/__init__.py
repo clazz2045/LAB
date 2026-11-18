@@ -7,6 +7,7 @@ from __future__ import annotations
 from .context import Finding, QualityContext, QualityInspector, QualityReport
 from .inspectors import (
     AssetsAndReferencesInspector,
+    EnginePurityInspector,
     GovernanceStyleInspector,
     InboxInspector,
     ManagementFilesInspector,
@@ -35,4 +36,5 @@ __all__ = [
     "SubagentsPolicyInspector",
     "GovernanceStyleInspector",
     "PortabilityInspector",
+    "EnginePurityInspector",
 ]

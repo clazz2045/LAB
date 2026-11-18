@@ -111,8 +111,10 @@ from .radar import (
 from .pre_tool_guard import (
     evaluate_pre_tool,
     is_allowed_coordinator_command,
+    is_allowed_coordinator_read,
     is_allowed_coordinator_write,
     is_subagent_session,
+    reset_coordinator_read_counter,
 )
 from .stop_guard import (
     evaluate_stop,
@@ -205,8 +207,10 @@ __all__ = [
     # pre_tool_guard
     "evaluate_pre_tool",
     "is_subagent_session",
+    "is_allowed_coordinator_read",
     "is_allowed_coordinator_write",
     "is_allowed_coordinator_command",
+    "reset_coordinator_read_counter",
     # stop_guard
     "evaluate_stop",
 ]

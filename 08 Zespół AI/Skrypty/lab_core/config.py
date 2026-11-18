@@ -70,6 +70,14 @@ class StorageConfig:
 
 
 @dataclass(frozen=True)
+class CodeLayoutConfig:
+    """Konfiguracja 3-strefowego standardu lokalizacji skryptów (jądro / warsztat / projekty)."""
+    canonical_engine: str = "08 Zespół AI/Skrypty"
+    workshop_tools: str = "02 Warsztat/Skrypty"
+    projects_pattern: str = "03 Projekty/{project_id}/**"
+
+
+@dataclass(frozen=True)
 class ExternalStorageConfig:
     """
     Zasady przechowywania i linkowania zasobów zewnętrznych (Cold Storage).
@@ -221,6 +229,7 @@ class ConfigManager:
         self.user: UserConfig
         self.system: SystemConfig
         self.storage: StorageConfig
+        self.code_layout: CodeLayoutConfig = CodeLayoutConfig()
         self.external_storage: ExternalStorageConfig = ExternalStorageConfig()
         self.rooms: Dict[str, RoomConfig] = {}
         self.ai_team: AITeamConfig
@@ -297,6 +306,15 @@ class ConfigManager:
             relative_mode=bool(stor_dict.get("relative_mode", True)),
             root_indicator=str(stor_dict.get("root_indicator", "lab.config.toml")),
         )
+        layout_dict = stor_dict.get("code_layout", {})
+        if isinstance(layout_dict, dict):
+            self.code_layout = CodeLayoutConfig(
+                canonical_engine=str(layout_dict.get("canonical_engine", "08 Zespół AI/Skrypty")).strip() or "08 Zespół AI/Skrypty",
+                workshop_tools=str(layout_dict.get("workshop_tools", "02 Warsztat/Skrypty")).strip() or "02 Warsztat/Skrypty",
+                projects_pattern=str(layout_dict.get("projects_pattern", "03 Projekty/{project_id}/**")).strip() or "03 Projekty/{project_id}/**",
+            )
+        else:
+            self.code_layout = CodeLayoutConfig()
         ext_dict = stor_dict.get("external", {})
         if isinstance(ext_dict, dict):
             self.external_storage = ExternalStorageConfig(

@@ -251,6 +251,15 @@ class WorkshopAndThoughtsInspector(QualityInspector):
             "_archiwum",
             ".ds_store",
         }
+        workshop_tools = getattr(getattr(ctx.config, "code_layout", None), "workshop_tools", "02 Warsztat/Skrypty")
+        workshop_tools_parts = Path(workshop_tools).parts
+        if (
+            len(workshop_tools_parts) >= 2
+            and normalize_nfc(workshop_tools_parts[0]).lower() == normalize_nfc(workshop_room.path).lower()
+        ):
+            ALLOWED_WORKSHOP_ENTRIES.add(normalize_nfc(workshop_tools_parts[1]).lower())
+        else:
+            ALLOWED_WORKSHOP_ENTRIES.add("skrypty")
         for item in workshop_path.iterdir():
             if item.name.startswith(".") and item.name != ".DS_Store":
                 continue

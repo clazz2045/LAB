@@ -170,8 +170,8 @@ class TestCheckpointAndBootstrap(unittest.TestCase):
             tr = _write(tmp / "t.jsonl", [_invoke(1), _call(2, "write_file")])
             cp = SessionCheckpoint(vault_root=tmp)
             with self.assertRaises(ComplianceAnnotationRequired):
-                cp.run_checkpoint(dry_run=True, transcript_path=tr)
-            receipt = cp.run_checkpoint(dry_run=True, transcript_path=tr, violation_note="zapis awaryjny, zatwierdzony")
+                cp.run_checkpoint(dry_run=True, transcript_path=tr, handoff="Weryfikacja błędu braku adnotacji w checkpoint")
+            receipt = cp.run_checkpoint(dry_run=True, transcript_path=tr, violation_note="zapis awaryjny, zatwierdzony", handoff="Weryfikacja błędu braku adnotacji w checkpoint")
             self.assertEqual(receipt.compliance["status"], "violation")
         finally:
             shutil.rmtree(tmp)
@@ -197,7 +197,7 @@ class TestCheckpointAndBootstrap(unittest.TestCase):
 
             tr = _write(tmp / "t.jsonl", [_call(1, "read_file"), _invoke(2)])
             cp = SessionCheckpoint(vault_root=tmp)
-            receipt = cp.run_checkpoint(dry_run=True, transcript_path=tr)
+            receipt = cp.run_checkpoint(dry_run=True, transcript_path=tr, handoff="Weryfikacja raportowania otwartych wątków agendy")
 
             self.assertTrue(receipt.agenda_check["section_found"])
             self.assertEqual(
@@ -229,7 +229,7 @@ class TestCheckpointAndBootstrap(unittest.TestCase):
 
             tr = _write(tmp / "t.jsonl", [_call(1, "read_file"), _invoke(2)])
             cp = SessionCheckpoint(vault_root=tmp)
-            receipt = cp.run_checkpoint(dry_run=True, transcript_path=tr)
+            receipt = cp.run_checkpoint(dry_run=True, transcript_path=tr, handoff="Weryfikacja raportowania otwartych wątków agendy")
 
             self.assertTrue(receipt.agenda_check["section_found"])
             self.assertEqual(receipt.agenda_check["open_tasks"], [])
@@ -261,7 +261,7 @@ class TestCheckpointAndBootstrap(unittest.TestCase):
 
             tr = _write(tmp / "t.jsonl", [_call(1, "read_file"), _invoke(2)])
             cp = SessionCheckpoint(vault_root=tmp)
-            receipt = cp.run_checkpoint(dry_run=True, transcript_path=tr)
+            receipt = cp.run_checkpoint(dry_run=True, transcript_path=tr, handoff="Weryfikacja raportowania otwartych wątków agendy")
 
             self.assertTrue(receipt.agenda_check["section_found"])
             self.assertEqual(receipt.agenda_check["open_tasks"], [])
