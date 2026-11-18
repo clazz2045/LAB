@@ -89,10 +89,18 @@ class SessionBootstrap:
             except Exception:
                 budget = 150_000
         try:
-            from lab_core.telemetry import find_latest_transcript, format_statusline, parse_telemetry
+            from lab_core.telemetry import (
+                estimate_fallback_telemetry,
+                find_latest_transcript,
+                format_statusline,
+                parse_telemetry,
+            )
 
-            transcript = find_latest_transcript()
-            metrics = parse_telemetry(transcript, limit=budget)
+            try:
+                transcript = find_latest_transcript(vault_root=self.vault_root)
+                metrics = parse_telemetry(transcript, limit=budget)
+            except Exception:
+                metrics = estimate_fallback_telemetry(vault_root=self.vault_root, limit=budget)
             return format_statusline(metrics)
         except Exception:
             limit_fmt = f"{budget // 1000}k" if budget >= 1000 and budget % 1000 == 0 else str(budget)

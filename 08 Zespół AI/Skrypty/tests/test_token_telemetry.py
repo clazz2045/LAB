@@ -534,6 +534,56 @@ class TestCLIIntegration(unittest.TestCase):
         self.assertEqual(fb.total_context_tokens, 0)
         self.assertEqual(fb.zone, "Komfortowa")
 
+    def test_codex_default_budget_150k_and_missing_transcript_fallback(self) -> None:
+        from unittest.mock import patch
+        from lab_core.telemetry import TranscriptNotFoundError, estimate_fallback_telemetry
+
+        codex_vault = Path(self.tmp_dir.name) / "CodexVault"
+        codex_vault.mkdir(parents=True)
+        (codex_vault / "lab.config.toml").write_text(
+            '[system]\ninstance_name = "CODEX_LAB"\n\n[ai_team.llm]\nprovider = "codex"\n',
+            encoding="utf-8",
+        )
+        (codex_vault / "AGENTS.md").write_text("# AGENTS\n" + ("regula " * 120), encoding="utf-8")
+
+        with patch.dict("os.environ", {"CODEX_THREAD_ID": "th-123"}, clear=True):
+            self.assertEqual(resolve_session_token_budget(vault_root=codex_vault), 150_000)
+
+        fb = estimate_fallback_telemetry(vault_root=codex_vault, limit=150_000)
+        self.assertEqual(fb.limit, 150_000)
+        self.assertGreater(fb.total_context_tokens, 0)
+
+        stdout_buf = io.StringIO()
+        old_stdout = sys.stdout
+        sys.stdout = stdout_buf
+        try:
+            with patch("lab_core.telemetry.find_latest_transcript", side_effect=TranscriptNotFoundError("brak")), \
+                 patch("lab_core.telemetry.resolve_session_token_budget", return_value=150_000), \
+                 patch("lab_core.telemetry._resolve_target_vault_root", return_value=codex_vault):
+                rc = main(["--statusline"])
+        finally:
+            sys.stdout = old_stdout
+        self.assertEqual(rc, 0)
+        out = stdout_buf.getvalue().strip()
+        self.assertRegex(out, r"^🧠 \d+(?:\.\d+)?k? / 150k \(\d+\.\d+%\) [🟢🟡🔴]$")
+
+    def test_codex_rollout_estimates_from_messages_without_token_count(self) -> None:
+        base_tmp = Path(self.tmp_dir.name)
+        codex_sessions = base_tmp / ".codex" / "sessions" / "2026" / "11" / "18"
+        codex_sessions.mkdir(parents=True)
+        rollout = codex_sessions / "rollout-2026-11-18T09-00-00-msg.jsonl"
+        rollout.write_text(
+            "\n".join([
+                json.dumps({"type": "session_meta", "payload": {"id": "msg"}}),
+                json.dumps({"type": "event_msg", "payload": {"type": "user_message", "message": "x" * 1600}}),
+                json.dumps({"type": "event_msg", "payload": {"type": "agent_message", "message": "y" * 2400}}),
+            ]),
+            encoding="utf-8",
+        )
+        metrics = parse_telemetry(rollout, limit=150_000)
+        self.assertEqual(metrics.limit, 150_000)
+        self.assertEqual(metrics.total_context_tokens, 1000)
+
 
 if __name__ == "__main__":
     unittest.main()

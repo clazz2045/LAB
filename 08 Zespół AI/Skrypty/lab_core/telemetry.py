@@ -79,26 +79,80 @@ class WorkshopUpdateError(TelemetryError):
 # ==============================================================================
 
 DEFAULT_WINDOW_LIMIT = 150_000
+DEFAULT_ANTIGRAVITY_LIMIT = 250_000
+
+
+def default_budget_for_provider(provider: str = "") -> int:
+    """Zwraca domyślny budżet okna kontekstowego dla wskazanego dostawcy LLM."""
+    return DEFAULT_ANTIGRAVITY_LIMIT if (provider or "").strip().lower() == "antigravity" else DEFAULT_WINDOW_LIMIT
+
+
+def _detect_runtime_provider() -> str:
+    """Wykrywa aktywnego dostawcę LLM na podstawie zmiennych środowiskowych procesu."""
+    if os.environ.get("ANTIGRAVITY_SOURCE_METADATA"):
+        return "antigravity"
+    if os.environ.get("CLAUDECODE") or os.environ.get("CLAUDE_CODE_ENTRYPOINT"):
+        return "claude"
+    if any(os.environ.get(k) for k in ("CODEX_THREAD_ID", "CODEX_CI", "CODEX_HOME", "CODEX_SANDBOX")):
+        return "codex"
+    return ""
+
+
+def _resolve_target_vault_root(vault_root: Optional[Union[str, Path]] = None) -> Optional[Path]:
+    """Rozwiązuje ścieżkę korzenia skarbca (argument -> moduł -> CWD)."""
+    if vault_root:
+        return Path(vault_root).expanduser().resolve()
+    if _vault_root is not None:
+        return _vault_root
+    try:
+        return find_vault_root(Path.cwd())
+    except Exception:
+        return None
+
+
+def resolve_llm_provider(vault_root: Optional[Union[str, Path]] = None) -> str:
+    """Ustala aktywnego dostawcę LLM (zmienne środowiskowe runtime -> [ai_team.llm].provider)."""
+    runtime_prov = _detect_runtime_provider()
+    if runtime_prov:
+        return runtime_prov
+    target_root = _resolve_target_vault_root(vault_root)
+    if target_root is None or ConfigManager is None:
+        return ""
+    cfg_file = target_root / "lab.config.toml"
+    if not cfg_file.is_file():
+        return ""
+    try:
+        cfg = ConfigManager(config_path=cfg_file, vault_root=target_root)
+        llm_cfg = cfg._raw_data.get("ai_team", {}).get("llm", {})
+        if isinstance(llm_cfg, dict):
+            return str(llm_cfg.get("provider", "") or "").strip().lower()
+    except Exception:
+        pass
+    return ""
 
 
 def resolve_session_token_budget(
     vault_root: Optional[Union[str, Path]] = None,
     default: int = DEFAULT_WINDOW_LIMIT,
 ) -> int:
-    """Odczytuje [telemetry].session_token_budget z lab.config.toml (fallback na default)."""
+    """Odczytuje [telemetry].session_token_budget z lab.config.toml (z domyślnym 150k dla Codex)."""
     if ConfigManager is None:
         return default
-    target_root: Optional[Path] = Path(vault_root).expanduser().resolve() if vault_root else _vault_root
+    target_root = _resolve_target_vault_root(vault_root)
     if target_root is None:
-        try:
-            target_root = find_vault_root(Path.cwd())
-        except Exception:
-            return default
+        return default
     cfg_file = target_root / "lab.config.toml"
     if not cfg_file.is_file():
         return default
     try:
         cfg = ConfigManager(config_path=cfg_file, vault_root=target_root)
+        raw_tel = cfg._raw_data.get("telemetry", {})
+        has_explicit = isinstance(raw_tel, dict) and "session_token_budget" in raw_tel
+        provider = resolve_llm_provider(target_root)
+        if not has_explicit:
+            if provider:
+                return default_budget_for_provider(provider)
+            return default
         budget = int(cfg.telemetry.session_token_budget)
         return budget if budget > 0 else default
     except Exception:
@@ -336,20 +390,60 @@ def _find_claude_transcripts(claude_projects_dir: Optional[Path] = None) -> List
 
 
 def _find_codex_transcripts(codex_sessions_dir: Optional[Path] = None) -> List[Path]:
-    """Zwraca listę plików sesji OpenAI Codex CLI (rollout-*.jsonl) z ~/.codex/sessions/."""
-    base = codex_sessions_dir or (Path.home() / ".codex" / "sessions")
-    if not base.is_dir():
-        return []
+    """Zwraca listę plików sesji OpenAI Codex CLI (rollout-*.jsonl) z $CODEX_HOME/sessions lub ~/.codex/sessions/."""
+    bases: List[Path] = []
+    if codex_sessions_dir is not None:
+        bases.append(codex_sessions_dir)
+    else:
+        codex_home = os.environ.get("CODEX_HOME")
+        if codex_home:
+            bases.append(Path(codex_home).expanduser() / "sessions")
+        bases.append(Path.home() / ".codex" / "sessions")
+
+    seen: Set[Path] = set()
+    found: List[Path] = []
+    for base in bases:
+        if not base.is_dir():
+            continue
+        try:
+            for p in base.rglob("rollout-*.jsonl"):
+                if p.is_file():
+                    rp = p.resolve()
+                    if rp not in seen:
+                        seen.add(rp)
+                        found.append(p)
+        except (PermissionError, OSError):
+            continue
+    return found
+
+
+def _codex_rollout_matches_vault(rollout_path: Path, vault_root: Path) -> bool:
+    """Sprawdza czy session_meta w pliku rollout-*.jsonl pochodzi z docelowego skarbca."""
     try:
-        return [p for p in base.rglob("rollout-*.jsonl") if p.is_file()]
-    except (PermissionError, OSError):
-        return []
+        target = str(vault_root.resolve())
+        with open(rollout_path, "r", encoding="utf-8", errors="replace") as f:
+            for idx, line in enumerate(f):
+                if idx >= 5:
+                    break
+                line_s = line.strip()
+                if not line_s:
+                    continue
+                data = json.loads(line_s)
+                if isinstance(data, dict) and data.get("type") == "session_meta":
+                    payload = data.get("payload")
+                    if isinstance(payload, dict) and isinstance(payload.get("cwd"), str):
+                        cwd_norm = str(Path(payload["cwd"]).expanduser().resolve())
+                        return cwd_norm == target or cwd_norm.startswith(target + os.sep)
+    except Exception:
+        return False
+    return False
 
 
 def find_latest_transcript(
     brain_dir: Optional[Union[str, Path]] = None,
     claude_dir: Optional[Union[str, Path]] = None,
     codex_dir: Optional[Union[str, Path]] = None,
+    vault_root: Optional[Union[str, Path]] = None,
 ) -> Path:
     """
     Deterministycznie wyszukuje aktywny plik logu transkryptu sesji:
@@ -378,6 +472,28 @@ def find_latest_transcript(
         except Exception:
             pass
 
+    if not brain_dir:
+        provider = resolve_llm_provider(vault_root)
+        target_root = _resolve_target_vault_root(vault_root)
+        x_dir = Path(codex_dir).expanduser().resolve() if codex_dir else None
+        codex_candidates = _find_codex_transcripts(x_dir)
+        c_dir = Path(claude_dir).expanduser().resolve() if claude_dir else None
+        claude_candidates = _find_claude_transcripts(c_dir)
+
+        if provider == "codex" and codex_candidates:
+            codex_sorted = sorted(codex_candidates, key=lambda p: p.stat().st_mtime, reverse=True)
+            if target_root is not None:
+                for p in codex_sorted[:20]:
+                    if _codex_rollout_matches_vault(p, target_root):
+                        return p
+            return codex_sorted[0]
+
+        if provider == "claude" and claude_candidates:
+            return max(claude_candidates, key=lambda p: p.stat().st_mtime)
+    else:
+        codex_candidates = []
+        claude_candidates = []
+
     candidates: List[Path] = []
     if base_dir.is_dir():
         pattern = "*/.system_generated/logs/transcript.jsonl"
@@ -387,10 +503,8 @@ def find_latest_transcript(
             pass
 
     if not brain_dir:
-        c_dir = Path(claude_dir).expanduser().resolve() if claude_dir else None
-        candidates.extend(_find_claude_transcripts(c_dir))
-        x_dir = Path(codex_dir).expanduser().resolve() if codex_dir else None
-        candidates.extend(_find_codex_transcripts(x_dir))
+        candidates.extend(claude_candidates)
+        candidates.extend(codex_candidates)
 
     if not candidates:
         raise TranscriptNotFoundError(
@@ -398,6 +512,127 @@ def find_latest_transcript(
         )
 
     return max(candidates, key=lambda p: p.stat().st_mtime)
+
+
+def _extract_codex_message_chars(data: Dict[str, Any]) -> int:
+    """Zlicza długość tekstów wiadomości w pliku rollout-*.jsonl (do szacowania przed pojawieniem się token_count)."""
+    total_chars = 0
+    dtype = data.get("type")
+    payload = data.get("payload")
+    if not isinstance(payload, dict):
+        return 0
+    if dtype == "event_msg" and payload.get("type") in ("user_message", "agent_message"):
+        for k in ("message", "text", "content"):
+            val = payload.get(k)
+            if isinstance(val, str):
+                total_chars += len(val)
+    elif dtype == "response_item" and payload.get("type") == "message":
+        content = payload.get("content")
+        if isinstance(content, str):
+            total_chars += len(content)
+        elif isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict):
+                    txt = part.get("text")
+                    if isinstance(txt, str):
+                        total_chars += len(txt)
+    return total_chars
+
+
+def _estimate_codex_rollout_tokens(path: Path) -> int:
+    """Szacuje tokeny z treści wiadomości w rollout-*.jsonl (0 gdy brak wiadomości)."""
+    total_chars = 0
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                line_s = line.strip()
+                if not line_s:
+                    continue
+                try:
+                    data = json.loads(line_s)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(data, dict):
+                    total_chars += _extract_codex_message_chars(data)
+    except OSError:
+        return 0
+    if total_chars <= 0:
+        return 0
+    return max(1, total_chars // 4)
+
+
+def estimate_fallback_telemetry(
+    vault_root: Optional[Union[str, Path]] = None,
+    limit: Optional[int] = None,
+) -> TokenMetrics:
+    """Dynamiczny fallback telemetrii w razie braku pliku transkryptu (np. Codex CLI / sandbox).
+
+    Szacuje aktualne obciążenie kontekstu startowego z aktywnych artefaktów sesji
+    w skarbcu (AGENTS.md, kontrakt Koordynatora, lab.config.toml, dzisiejsza Agenda i Dzienniki).
+    """
+    target_root = _resolve_target_vault_root(vault_root)
+    effective_limit = int(limit) if limit is not None else resolve_session_token_budget(vault_root=target_root)
+
+    total_chars = 0
+    if target_root is not None and target_root.is_dir():
+        candidates: List[Path] = [
+            target_root / "AGENTS.md",
+            target_root / "lab.config.toml",
+        ]
+        today_str = date.today().isoformat()
+        year_str, month_str, _ = today_str.split("-")
+
+        if ConfigManager is not None and (target_root / "lab.config.toml").is_file():
+            try:
+                cfg = ConfigManager(config_path=target_root / "lab.config.toml", vault_root=target_root)
+                try:
+                    candidates.append(cfg.get_agent_contract_file("coordinator", absolute=True))
+                except Exception:
+                    pass
+                try:
+                    ws_room = cfg.get_room_by_role("daily-workbench")
+                    candidates.append(target_root / ws_room.path / f"{today_str} – Agenda Robocza.md")
+                except Exception:
+                    pass
+                try:
+                    ai_room = cfg.get_room_by_role("governance-and-engine")
+                    logs_dir = target_root / ai_room.path / "Dzienniki Sesji" / year_str / month_str
+                    if logs_dir.is_dir():
+                        candidates.extend(sorted(logs_dir.glob(f"{today_str}*.md")))
+                except Exception:
+                    pass
+            except Exception:
+                pass
+        else:
+            candidates.append(target_root / "02 Warsztat" / f"{today_str} – Agenda Robocza.md")
+
+        seen: Set[Path] = set()
+        for p in candidates:
+            try:
+                rp = p.resolve()
+                if rp in seen or not rp.is_file():
+                    continue
+                seen.add(rp)
+                total_chars += len(rp.read_text(encoding="utf-8", errors="replace"))
+            except OSError:
+                continue
+
+    estimated_tokens = max(0, total_chars // 4)
+    percentage = round((estimated_tokens / effective_limit) * 100, 2) if effective_limit > 0 else 0.0
+    zone, zone_icon, zone_display = calculate_zone(estimated_tokens, effective_limit)
+    return TokenMetrics(
+        input_tokens=estimated_tokens,
+        cache_read_tokens=0,
+        output_tokens=0,
+        total_context_tokens=estimated_tokens,
+        limit=effective_limit,
+        percentage=percentage,
+        zone=zone,
+        zone_icon=zone_icon,
+        zone_display=zone_display,
+        step_index=None,
+        transcript_path="fallback://estimated",
+    )
 
 
 def parse_telemetry(
@@ -444,14 +679,16 @@ def parse_telemetry(
 
     if last_token_entry is None:
         if path.name.startswith("rollout-"):
-            zone, zone_icon, zone_display = calculate_zone(0, effective_limit)
+            est_tokens = _estimate_codex_rollout_tokens(path)
+            percentage = round((est_tokens / effective_limit) * 100, 2) if effective_limit > 0 else 0.0
+            zone, zone_icon, zone_display = calculate_zone(est_tokens, effective_limit)
             return TokenMetrics(
-                input_tokens=0,
+                input_tokens=est_tokens,
                 cache_read_tokens=0,
                 output_tokens=0,
-                total_context_tokens=0,
+                total_context_tokens=est_tokens,
                 limit=effective_limit,
-                percentage=0.0,
+                percentage=percentage,
                 zone=zone,
                 zone_icon=zone_icon,
                 zone_display=zone_display,
@@ -526,7 +763,13 @@ def _extract_usage_from_entry(data: Dict[str, Any]) -> Optional[Tuple[int, int, 
             if isinstance(u, dict) and "input_tokens" in u:
                 try:
                     in_tok = int(u.get("input_tokens", 0) or 0)
-                    cache_tok = int(u.get("cached_input_tokens", 0) or 0)
+                    cache_details = u.get("input_tokens_details")
+                    cached_detail = int(cache_details.get("cached_tokens", 0) or 0) if isinstance(cache_details, dict) else 0
+                    cache_tok = (
+                        int(u.get("cached_input_tokens", 0) or 0)
+                        + int(u.get("cache_read_input_tokens", 0) or 0)
+                        + cached_detail
+                    )
                     out_tok = int(u.get("output_tokens", 0) or 0)
                     return in_tok, cache_tok, out_tok, None
                 except (ValueError, TypeError):
@@ -1453,15 +1696,25 @@ def main(args: Optional[List[str]] = None) -> int:
                 print(format_telemetry_report(report))
             return 0
 
-        # 1. Lokalizacja pliku transkryptu
+        effective_limit = parsed_args.limit if parsed_args.limit is not None else resolve_session_token_budget()
+
+        # 1. Lokalizacja pliku transkryptu + bezpieczny fallback przy braku transkryptu w CLI (np. Codex CLI)
+        explicit_source = bool(parsed_args.transcript_path or parsed_args.brain_dir)
+        transcript_file: Optional[Path] = None
+        metrics: Optional[TokenMetrics] = None
+
         if parsed_args.transcript_path:
             transcript_file = Path(parsed_args.transcript_path).expanduser().resolve()
         else:
-            transcript_file = find_latest_transcript(brain_dir=parsed_args.brain_dir)
-
-        effective_limit = parsed_args.limit if parsed_args.limit is not None else resolve_session_token_budget()
+            try:
+                transcript_file = find_latest_transcript(brain_dir=parsed_args.brain_dir)
+            except TranscriptNotFoundError:
+                if explicit_source or parsed_args.session_summary:
+                    raise
+                metrics = estimate_fallback_telemetry(limit=effective_limit)
 
         if parsed_args.session_summary:
+            assert transcript_file is not None
             summary = summarize_session_telemetry(
                 transcript_file,
                 brain_dir=parsed_args.brain_dir,
@@ -1481,8 +1734,15 @@ def main(args: Optional[List[str]] = None) -> int:
                 print(format_session_summary(summary))
             return 0
 
-        # 2. Parsowanie telemetrii
-        metrics = parse_telemetry(transcript_file, limit=effective_limit)
+        # 2. Parsowanie telemetrii (z fallbackiem, jeśli brak metryk w domyślnym trybie autodetekcji)
+        if metrics is None:
+            assert transcript_file is not None
+            try:
+                metrics = parse_telemetry(transcript_file, limit=effective_limit)
+            except (TranscriptNotFoundError, TelemetryDataError):
+                if explicit_source:
+                    raise
+                metrics = estimate_fallback_telemetry(limit=effective_limit)
 
         # 3. Oczyszczanie pliku warsztatu (jeśli zażądano lub użyto wycofanej flagi)
         workshop_cleaned = False

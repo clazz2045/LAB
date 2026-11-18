@@ -15,6 +15,12 @@ from lab_core.markdown import normalize_nfc
 from lab_core.quality.context import QualityContext, QualityInspector
 
 ALLOWED_PRODUKT_SUBDIRS: Set[str] = {"_podglad", "_wersje", "_zrodla"}
+ALLOWED_PRODUKT_LAUNCHERS: Set[str] = {
+    "LAB-Installer.command",
+    "LAB-Installer.bat",
+    "LAB-Update.command",
+    "LAB-Update.bat",
+}
 FORBIDDEN_PSEUDO_RELEASE_FOLDERS: Set[str] = {
     "dzieło", "dzielo", "artefakt", "artefakty", "wydania", "wydanie", "releases", "output", "build"
 }
@@ -144,7 +150,7 @@ class ProjectsAndProductsInspector(QualityInspector):
                     continue
 
                 for f in files:
-                    if f.startswith(".") or f in IGNORED_FILES:
+                    if f.startswith(".") or f in IGNORED_FILES or f in ALLOWED_PRODUKT_LAUNCHERS:
                         continue
                     file_path = current_dir / f
                     ext = file_path.suffix.lower()

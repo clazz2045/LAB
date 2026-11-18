@@ -50,6 +50,7 @@ from lab_core.installer import (
     InstallResult,
     LabEngineInstaller,
     default_session_token_budget,
+    update_engine,
 )
 from lab_core.themes import THEME_PRESETS, get_theme_preset, list_theme_presets
 
@@ -1037,8 +1038,24 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--non-interactive", action="store_true", help="Tryb skryptowy bez pytań")
     parser.add_argument("--cli", action="store_true", help="Uruchom wywiad terminalowy zamiast kreatora WWW")
     parser.add_argument("--web", action="store_true", help="Uruchom lokalny kreator WWW (domyślny bez flag)")
+    parser.add_argument("--update", action="store_true", help="Aktualizuj silnik istniejącego skarbca in-place")
+    parser.add_argument("--vault-root", type=str, default=None, help="Ścieżka do istniejącego skarbca przy --update")
+    parser.add_argument("--payload", type=str, default=None, help="Źródło aktualizacji (katalog, plik .zip lub URL)")
 
     args = parser.parse_args(argv)
+
+    if args.update:
+        vault = args.vault_root or args.target_dir or "."
+        res = update_engine(vault_root=vault, payload_source=args.payload)
+        status_icon = "✅" if res.success else "❌"
+        print(f"{status_icon} Aktualizacja LAB ({res.vault_root}) w {res.elapsed_seconds}s")
+        print(f"   Zaktualizowano plików : {len(res.updated_items)}")
+        print(f"   Pominięto (aktualne)  : {len(res.skipped_items)}")
+        if res.smoke_check_output:
+            print(res.smoke_check_output)
+        if res.error_message:
+            print(f"❌ BŁĄD AKTUALIZACJI: {res.error_message}", file=sys.stderr)
+        return 0 if res.success else 1
 
     if args.diagnostics_only:
         report = run_preflight_diagnostics()

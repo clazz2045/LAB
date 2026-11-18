@@ -123,6 +123,9 @@ class TestGitSyncAndQG2(unittest.TestCase):
         self.assertIn("Gatekeeper", readme_txt)
         self.assertIn("com.apple.quarantine", readme_txt)
         self.assertIn("Control+klik", readme_txt)
+        self.assertIn("Aktualizacja istniejącego środowiska LAB (1 kliknięcie)", readme_txt)
+        self.assertIn("LAB-Update.command", readme_txt)
+        self.assertIn("LAB-Update.bat", readme_txt)
         self.assertIn("Obsidian", readme_txt)
         self.assertIn("AGENTS.md", readme_txt)
         self.assertIn("_Księga Governance LAB.md", readme_txt)
@@ -146,7 +149,10 @@ class TestGitSyncAndQG2(unittest.TestCase):
         with zipfile.ZipFile(zip_path, "r") as zf:
             names = zf.namelist()
             top_files = {n for n in names if "/" not in n}
-            self.assertEqual(top_files, {"LAB-Installer.command", "LAB-Installer.bat"})
+            self.assertEqual(
+                top_files,
+                {"LAB-Installer.command", "LAB-Installer.bat", "LAB-Update.command", "LAB-Update.bat"},
+            )
             payload_names = [n for n in names if n.startswith(".lab-payload/")]
             self.assertEqual(len(names) - len(top_files), len(payload_names))
             self.assertIn(".lab-payload/lab.config.example.toml", payload_names)

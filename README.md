@@ -11,7 +11,7 @@ Projekt rozwijany w standardzie **SAT (Szukaj · Analizuj · Twórz)** oraz **10
 ## Szybki start (macOS / Windows)
 
 **Wariant 1 – Paczka instalacyjna (`LAB-Installer.zip` z GitHub Releases):**
-Rozpakuj archiwum. Na wierzchu zobaczysz wyłącznie dwa launchery: `LAB-Installer.command` (macOS) i `LAB-Installer.bat` (Windows) – cały wsad instalacyjny jest bezpiecznie ukryty w `.lab-payload/`.
+Rozpakuj archiwum. Na wierzchu zobaczysz launchery: `LAB-Installer.command` / `LAB-Update.command` (macOS) oraz `LAB-Installer.bat` / `LAB-Update.bat` (Windows) – cały wsad instalacyjny jest bezpiecznie ukryty w `.lab-payload/`.
 
 **Wariant 2 – Klonowanie repozytorium:**
 ```bash
@@ -22,6 +22,14 @@ cd LAB
 - **macOS:** uruchom `LAB-Installer.command` (lub `python3 lab-init.py`)
 - **Windows:** uruchom `LAB-Installer.bat` (lub `py -3 lab-init.py`)
 - **Tryb bezinteraktywny (CI):** `python3 lab-init.py --non-interactive --target-dir ~/Documents/LAB`
+
+### Aktualizacja istniejącego środowiska LAB (1 kliknięcie)
+
+Masz już własny skarbiec LAB i chcesz wgrać najnowszą wersję silnika? Zrobisz to w 3 prostych krokach:
+
+1. Pobierz plik `LAB-Update.command` (macOS) lub `LAB-Update.bat` (Windows) z repozytorium lub z paczki Release (`LAB-Installer.zip`).
+2. Przenieś pobrany plik do głównego katalogu swojego skarbca LAB (obok pliku `lab.config.toml`).
+3. Kliknij dwukrotnie w plik. Skrypt automatycznie i bezpiecznie pobierze najnowszy silnik do `08 Zespół AI/Skrypty/` oraz zaktualizuje konfigurację agentów, gwarantując 100% nienaruszalności Twoich prywatnych notatek, projektów i baz danych (pokoje `01–07`).
 
 ### Uwaga: Gatekeeper macOS (pierwsze uruchomienie `.command`)
 Jeśli macOS zablokuje plik `LAB-Installer.command` komunikatem o nieznanym deweloperze:
@@ -44,8 +52,10 @@ Konfiguracja wzorcowa znajduje się w `lab.config.example.toml` (sekcje `[vcs]` 
 LAB/
 ├── core_config.py           # Silnik parametryzacji, walidacji TOML i stałych ról pokoi
 ├── lab-init.py              # Zunifikowany instalator i kreator WWW (http.server)
-├── LAB-Installer.command    # Launcher macOS (sprawdza Python >= 3.11)
-├── LAB-Installer.bat        # Launcher Windows (py -3)
+├── LAB-Installer.command    # Launcher instalacji macOS (sprawdza Python >= 3.11)
+├── LAB-Installer.bat        # Launcher instalacji Windows (py -3)
+├── LAB-Update.command       # Launcher aktualizacji macOS (1 kliknięcie)
+├── LAB-Update.bat           # Launcher aktualizacji Windows (1 kliknięcie)
 ├── lab.config.example.toml  # Wzorzec konfiguracji ([vcs], [ai_team.llm] Antigravity, Claude, OpenAI Codex CLI)
 ├── pytest.py                # 100% stdlib runner testów (Zero-Pip)
 ├── AGENTS.md                # Główny kontrakt wejściowy Zespołu AI

@@ -38,7 +38,7 @@ from lab_core.env import ensure_vault_in_sys_path, find_vault_root
 ensure_vault_in_sys_path(_script_dir)
 
 from lab_core.config import ConfigError, ConfigManager
-from lab_core.markdown import parse_frontmatter
+from lab_core.markdown import normalize_reference_frontmatter, parse_frontmatter
 from lab_core.routing import DrainRouter, extract_date
 
 IGNORED_FILES = {".DS_Store", "desktop.ini"}
@@ -211,9 +211,20 @@ class InboxDrainer:
             if dest_path.is_file() and dest_path.suffix.lower() in doc_exts:
                 self._ensure_companion_reference_note(dest_path)
             elif dest_path.is_file() and dest_path.suffix.lower() == ".md" and dest_dir.name == "Notatki":
+                self._normalize_reference_note_frontmatter(dest_path)
                 self._ensure_source_metadata_callout(dest_path)
 
         return dest_path
+
+    def _normalize_reference_note_frontmatter(self, note_path: Path) -> None:
+        """Normalizuje frontmatter notatki (capture / brak type -> note + reference + created)."""
+        try:
+            content = note_path.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            return
+        updated = normalize_reference_frontmatter(content)
+        if updated != content:
+            note_path.write_text(updated, encoding="utf-8")
 
     def _ensure_source_metadata_callout(self, note_path: Path) -> None:
         """Bramka ingestu: gwarantuje obecność calloutu '> [!info] Metadane źródłowe' w notatce referencyjnej."""

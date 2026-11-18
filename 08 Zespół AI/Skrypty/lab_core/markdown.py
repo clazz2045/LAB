@@ -5,6 +5,7 @@ Zero zewnętrznych zależności pip (brak PyYAML).
 
 from __future__ import annotations
 
+import datetime
 import re
 import unicodedata
 from pathlib import Path
@@ -182,3 +183,29 @@ def ensure_consumed_field(content: str, default: bool = False) -> str:
     # Jeśli brak frontmattera, wygeneruj minimalny nagłówek
     fm_val = {"type": "note", "consumed": default}
     return dump_frontmatter(fm_val, content)
+
+
+def normalize_reference_frontmatter(content: str, today_str: Optional[str] = None) -> str:
+    """Normalizuje frontmatter notatki referencyjnej przy drenażu do 06 Zasoby/Notatki/.
+
+    Jeśli brak klucza 'type' lub ma wartość 'capture', ustawia:
+    - type: note
+    - note_type: reference (jeśli brak)
+    - created: YYYY-MM-DD (dzisiejsza data, jeśli brak)
+    - consumed: false (jeśli brak)
+    Zachowuje pozostałe metadane oraz treść notatki.
+    """
+    fm, body = parse_frontmatter(content)
+    raw_type = str(fm.get("type", "")).strip().lower()
+    if raw_type not in {"", "capture"}:
+        return ensure_consumed_field(content, default=False)
+
+    fm["type"] = "note"
+    if not str(fm.get("note_type", "")).strip():
+        fm["note_type"] = "reference"
+    if not str(fm.get("created", "")).strip():
+        fm["created"] = today_str or datetime.date.today().isoformat()
+    if "consumed" not in fm:
+        fm["consumed"] = False
+
+    return dump_frontmatter(fm, body)

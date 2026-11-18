@@ -604,6 +604,114 @@ class TestConfigPortability(unittest.TestCase):
             self.assertFalse(ok3)
             self.assertTrue(any("session_bootstrap: FAIL" in d for d in det3))
 
+    def test_update_engine_preserves_user_data_and_updates_scripts_and_codex(self):
+        import sqlite3
+        import zipfile
+        from lab_core.installer import update_engine
+
+        with tempfile.TemporaryDirectory() as td:
+            tmp_path = Path(td)
+            vault = tmp_path / "CodexVault"
+            res_inst = LabEngineInstaller(
+                InstallOptions(
+                    target_dir=vault,
+                    llm_provider="codex",
+                    skip_preflight=True,
+                    copy_engine=True,
+                )
+            ).run()
+            self.assertTrue(res_inst.success, res_inst.error_message)
+
+            # Dane użytkownika, które NIGDY nie mogą zostać naruszone
+            cfg_path = vault / "lab.config.toml"
+            cfg_text = cfg_path.read_text(encoding="utf-8") + "\n# CUSTOM_USER_MARKER\n"
+            cfg_path.write_text(cfg_text, encoding="utf-8")
+
+            user_note = vault / "02 Warsztat" / "MojaNotatkaUzytkownika.md"
+            user_note.write_text("---\ntype: note\n---\n# Prywatna myśl\n", encoding="utf-8")
+            inbox_note = vault / "01 Skrzynka" / "inbox_item.md"
+            inbox_note.write_text("Surowy zapis\n", encoding="utf-8")
+
+            db_path = vault / "07 Bazy Danych" / "lab_master.db"
+            conn = sqlite3.connect(str(db_path))
+            conn.execute("CREATE TABLE IF NOT EXISTS _user_marker (val TEXT);")
+            conn.execute("INSERT INTO _user_marker (val) VALUES ('zachowano');")
+            conn.commit()
+            conn.close()
+
+            # Przestarzałe pliki silnika i .codex/config.toml do nadpisania
+            target_telemetry = vault / "08 Zespół AI" / "Skrypty" / "lab_core" / "telemetry.py"
+            target_telemetry.write_text("# OLD TELEMETRY\n", encoding="utf-8")
+            codex_cfg = vault / ".codex" / "config.toml"
+            codex_cfg.write_text("# OLD CODEX CONFIG\n", encoding="utf-8")
+
+            # Zbuduj paczkę ZIP (jak LAB-Installer.zip z .lab-payload/)
+            zip_path = tmp_path / "LAB-Installer.zip"
+            src_skrypty = Path(__file__).resolve().parent.parent
+            src_hooks = src_skrypty.parent.parent / ".agents" / "hooks.json"
+            with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+                for p in src_skrypty.rglob("*"):
+                    if not p.is_file():
+                        continue
+                    if any(part in {"__pycache__", ".pytest_cache"} for part in p.parts) or p.suffix == ".pyc":
+                        continue
+                    rel = p.relative_to(src_skrypty)
+                    zf.write(p, arcname=f".lab-payload/08 Zespół AI/Skrypty/{rel.as_posix()}")
+                if src_hooks.is_file():
+                    zf.write(src_hooks, arcname=".lab-payload/.agents/hooks.json")
+
+            upd = update_engine(vault_root=vault, payload_source=zip_path, run_smoke_check=True)
+            self.assertTrue(upd.success, upd.error_message or upd.smoke_check_output)
+            self.assertTrue(upd.smoke_check_passed)
+            self.assertIn("08 Zespół AI/Skrypty/lab_core/telemetry.py", upd.updated_items)
+            self.assertIn(".codex/config.toml", upd.updated_items)
+            self.assertTrue((vault / ".codex" / "config.toml.bak").is_file())
+            self.assertIn("pre_tool_guard.py", codex_cfg.read_text(encoding="utf-8"))
+            self.assertNotIn("# OLD TELEMETRY", target_telemetry.read_text(encoding="utf-8"))
+
+            # Weryfikacja nienaruszalności danych użytkownika i lab.config.toml
+            self.assertIn("# CUSTOM_USER_MARKER", cfg_path.read_text(encoding="utf-8"))
+            self.assertEqual(user_note.read_text(encoding="utf-8"), "---\ntype: note\n---\n# Prywatna myśl\n")
+            self.assertEqual(inbox_note.read_text(encoding="utf-8"), "Surowy zapis\n")
+            conn2 = sqlite3.connect(str(db_path))
+            row = conn2.execute("SELECT val FROM _user_marker;").fetchone()
+            conn2.close()
+            self.assertEqual(row, ("zachowano",))
+
+    def test_update_launchers_and_cli_templates(self):
+        import ast
+        import os
+        from lab_core.config import ConfigManager
+        from lab_core.constants import RULE8_REQUIRED_PHRASES
+        from lab_core.templates import generate_agents_contract
+
+        repo_root = Path(__file__).resolve().parents[3]
+        prod_dir = repo_root / "03 Projekty" / "PR-018 LAB Open Source" / "Produkt"
+        for base in (repo_root, prod_dir):
+            cmd_f = base / "LAB-Update.command"
+            bat_f = base / "LAB-Update.bat"
+            self.assertTrue(cmd_f.is_file(), f"Brak {cmd_f}")
+            self.assertTrue(bat_f.is_file(), f"Brak {bat_f}")
+            cmd_txt = cmd_f.read_text(encoding="utf-8")
+            self.assertIn("https://github.com/clazz2045/LAB/releases/latest/download/LAB-Installer.zip", cmd_txt)
+            bat_txt = bat_f.read_text(encoding="utf-8")
+            self.assertIn("https://github.com/clazz2045/LAB/releases/latest/download/LAB-Installer.zip", bat_txt)
+            lines = bat_txt.splitlines()
+            idx = lines.index("### PYTHON_BOOTSTRAP ###") + 1
+            ast.parse("\n".join(lines[idx:]))
+            if os.name == "posix":
+                self.assertTrue(bool(cmd_f.stat().st_mode & 0o111), f"{cmd_f} musi być wykonywalny")
+
+        cfg = ConfigManager(vault_root=repo_root)
+        agents_md = generate_agents_contract(cfg)
+        for phrase in RULE8_REQUIRED_PHRASES:
+            self.assertIn(phrase, agents_md)
+        self.assertIn("checkpoint.py", agents_md)
+        self.assertIn("session_bootstrap.py", agents_md)
+        self.assertIn("check_quality.py", agents_md)
+        self.assertIn("Codex CLI", agents_md)
+        self.assertIn("zrób checkpoint", agents_md)
+
 
 if __name__ == "__main__":
     unittest.main()

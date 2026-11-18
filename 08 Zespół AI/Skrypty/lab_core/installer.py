@@ -13,7 +13,8 @@ Odpowiada za deterministyczną budowę czystego skarbca LAB:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import argparse
+from dataclasses import asdict, dataclass, field
 import json
 import os
 from pathlib import Path
@@ -22,9 +23,12 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import time
 import tomllib
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
+import urllib.request
+import zipfile
 
 sys.dont_write_bytecode = True
 
@@ -47,6 +51,7 @@ from .templates import (
 from .themes import generate_design_tokens_css, get_theme_preset
 
 LAB_VERSION = "3.0.0"
+DEFAULT_RELEASE_ZIP_URL = "https://github.com/clazz2045/LAB/releases/latest/download/LAB-Installer.zip"
 
 DEFAULT_AGENT_NAMES: Dict[str, str] = {
     "coordinator": "Adam",
@@ -191,6 +196,39 @@ class InstallResult:
     warnings: List[str] = field(default_factory=list)
     smoke_check_passed: bool = True
     smoke_check_details: List[str] = field(default_factory=list)
+
+
+@dataclass
+class UpdateResult:
+    """Raport z aktualizacji silnika LAB in-place."""
+    success: bool
+    vault_root: Path
+    elapsed_seconds: float
+    updated_items: List[str] = field(default_factory=list)
+    skipped_items: List[str] = field(default_factory=list)
+    warnings: List[str] = field(default_factory=list)
+    smoke_check_passed: bool = True
+    smoke_check_output: str = ""
+    error_message: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serializuje wynik aktualizacji do słownika JSON."""
+        data = asdict(self)
+        data["vault_root"] = str(self.vault_root)
+        return data
+
+
+def _build_codex_config_toml(ai_room_path: str) -> str:
+    """Buduje kanoniczny plik .codex/config.toml dla OpenAI Codex CLI."""
+    guard_rel = f"{ai_room_path}/Skrypty/lab_core/pre_tool_guard.py"
+    return (
+        "# Konfiguracja OpenAI Codex CLI dla instancji LAB 3.0\n"
+        "# Standard: 100% Python stdlib, Zero-Pip\n\n"
+        "[[hooks.PreToolUse]]\n"
+        'matcher = ".*"\n'
+        f'command = "python3 \\"{guard_rel}\\""\n'
+        "timeout = 5\n"
+    )
 
 
 def default_session_token_budget(llm_provider: str = "antigravity") -> int:
@@ -686,15 +724,7 @@ class LabEngineInstaller:
                     bak = _backup_if_exists(codex_cfg_path)
                     if bak:
                         self.created.append(f".codex/{bak.name}")
-                guard_rel = f"{ai_room_path}/Skrypty/lab_core/pre_tool_guard.py"
-                codex_toml = (
-                    "# Konfiguracja OpenAI Codex CLI dla instancji LAB 3.0\n"
-                    "# Standard: 100% Python stdlib, Zero-Pip\n\n"
-                    "[[hooks.PreToolUse]]\n"
-                    'matcher = ".*"\n'
-                    f'command = "python3 \\"{guard_rel}\\""\n'
-                    "timeout = 5\n"
-                )
+                codex_toml = _build_codex_config_toml(ai_room_path)
                 tomllib.loads(codex_toml)
                 codex_cfg_path.write_text(codex_toml, encoding="utf-8")
                 self.created.append(".codex/config.toml")
@@ -1104,6 +1134,8 @@ created: {time.strftime('%Y-%m-%d')}
             "lab_init.py",
             "LAB-Installer.command",
             "LAB-Installer.bat",
+            "LAB-Update.command",
+            "LAB-Update.bat",
         ):
             src_rf = src_vault_root / root_file
             dst_rf = config.vault_root / root_file
@@ -1436,3 +1468,326 @@ def install_project_capsule(
     )
     installer = LabEngineInstaller(options)
     return installer.run()
+
+
+def _safe_extract_zip(zip_path: Path, dest_dir: Path) -> Path:
+    """Bezpiecznie rozpakowuje archiwum ZIP do katalogu tymczasowego (ochrona zip-slip)."""
+    dest_resolved = dest_dir.resolve()
+    dest_resolved.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        for member in zf.infolist():
+            member_path = (dest_resolved / member.filename).resolve()
+            try:
+                member_path.relative_to(dest_resolved)
+            except ValueError as exc:
+                raise InstallerError(f"Niedozwolona ścieżka w archiwum ZIP: {member.filename}") from exc
+        zf.extractall(dest_resolved)
+    return dest_resolved
+
+
+def _download_release_zip(url: str, dest_zip: Path, timeout: int = 30) -> Path:
+    """Pobiera paczkę ZIP z repozytorium GitHub Releases (100% stdlib)."""
+    req = urllib.request.Request(
+        url,
+        headers={"User-Agent": f"LAB-Updater/{LAB_VERSION}"},
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        data = resp.read()
+    if not data:
+        raise InstallerError(f"Pobrane archiwum z '{url}' jest puste.")
+    dest_zip.write_bytes(data)
+    return dest_zip
+
+
+def _locate_skrypty_in_payload(payload_root: Path, ai_room_path: str) -> Optional[Path]:
+    """Odnajduje katalog Skrypty/ wewnątrz rozpakowanego wsadu aktualizacyjnego."""
+    candidates = [
+        payload_root / ai_room_path / "Skrypty",
+        payload_root / "08 Zespół AI" / "Skrypty",
+        payload_root / "Skrypty",
+        payload_root,
+    ]
+    for cand in candidates:
+        if cand.is_dir() and ((cand / "lab_core").is_dir() or (cand / "check_quality.py").is_file()):
+            return cand
+    for child in sorted(payload_root.iterdir()):
+        if child.is_dir():
+            sub = child / "Skrypty"
+            if sub.is_dir() and ((sub / "lab_core").is_dir() or (sub / "check_quality.py").is_file()):
+                return sub
+    return None
+
+
+def _resolve_update_payload(
+    payload_source: Optional[Union[Path, str]],
+    target: Path,
+    ai_room_path: str,
+    tmp_dir: Path,
+) -> Tuple[Path, Optional[Path], Optional[Path]]:
+    """Rozwiązuje źródło aktualizacji: lokalny katalog/ZIP, URL HTTP lub GitHub Releases."""
+    target_skrypty = (target / ai_room_path / "Skrypty").resolve()
+    resolved_dir: Optional[Path] = None
+
+    if payload_source is None:
+        local_zips = [
+            Path.cwd() / "LAB-Installer.zip",
+            target / "LAB-Installer.zip",
+        ]
+        for z in local_zips:
+            if z.is_file():
+                resolved_dir = _safe_extract_zip(z, tmp_dir / "extracted")
+                break
+
+        if resolved_dir is None:
+            for cand_dir in (
+                Path.cwd() / ".lab-payload",
+                Path(__file__).resolve().parents[3] / ".lab-payload",
+            ):
+                if cand_dir.is_dir() and _locate_skrypty_in_payload(cand_dir, ai_room_path) is not None:
+                    resolved_dir = cand_dir
+                    break
+
+        if resolved_dir is None:
+            repo_root = Path(__file__).resolve().parents[3]
+            repo_skrypty = _locate_skrypty_in_payload(repo_root, ai_room_path)
+            if repo_skrypty is not None and repo_skrypty.resolve() != target_skrypty:
+                resolved_dir = repo_root
+
+        if resolved_dir is None:
+            zip_file = _download_release_zip(DEFAULT_RELEASE_ZIP_URL, tmp_dir / "LAB-Installer.zip")
+            resolved_dir = _safe_extract_zip(zip_file, tmp_dir / "extracted")
+    elif isinstance(payload_source, str) and payload_source.strip().startswith(("http://", "https://")):
+        zip_file = _download_release_zip(payload_source.strip(), tmp_dir / "LAB-Installer.zip")
+        resolved_dir = _safe_extract_zip(zip_file, tmp_dir / "extracted")
+    else:
+        src_path = Path(payload_source).expanduser().resolve()
+        if not src_path.exists():
+            raise InstallerError(f"Brak źródła aktualizacji: {src_path}")
+        if src_path.is_file() and src_path.suffix.lower() == ".zip":
+            resolved_dir = _safe_extract_zip(src_path, tmp_dir / "extracted")
+        elif src_path.is_dir():
+            resolved_dir = src_path
+        else:
+            raise InstallerError(f"Nieobsługiwany typ źródła aktualizacji: {src_path}")
+
+    assert resolved_dir is not None
+    payload_root = resolved_dir / ".lab-payload" if (resolved_dir / ".lab-payload").is_dir() else resolved_dir
+    src_skrypty = _locate_skrypty_in_payload(payload_root, ai_room_path)
+    src_hooks = payload_root / ".agents" / "hooks.json"
+    return payload_root, src_skrypty, (src_hooks if src_hooks.is_file() else None)
+
+
+def update_engine(
+    vault_root: Path | str,
+    payload_source: Optional[Union[Path, str]] = None,
+    run_smoke_check: bool = True,
+) -> UpdateResult:
+    """Aktualizuje silnik LAB in-place bez naruszania notatek, baz danych i konfiguracji użytkownika.
+
+    Aktualizuje wyłącznie:
+    - katalog '<governance-and-engine>/Skrypty/' (np. '08 Zespół AI/Skrypty/'),
+    - konfiguracje agentów ('.codex/config.toml', '.agents/hooks.json').
+
+    Bezwzględnie nie dotyka pokojów 01–07, baz danych ani pliku lab.config.toml.
+    Po aktualizacji wykonuje smoke check ('check_quality.py --summary').
+    """
+    start_time = time.perf_counter()
+    target = Path(vault_root).expanduser().resolve()
+    updated_items: List[str] = []
+    skipped_items: List[str] = []
+    warnings: List[str] = []
+
+    cfg_path = target / "lab.config.toml"
+    if not target.is_dir() or not cfg_path.is_file():
+        return UpdateResult(
+            success=False,
+            vault_root=target,
+            elapsed_seconds=round(time.perf_counter() - start_time, 4),
+            smoke_check_passed=False,
+            error_message="Brak pliku lab.config.toml w katalogu docelowym — wymagany istniejący skarbiec LAB.",
+        )
+
+    try:
+        config_mgr = ConfigManager(config_path=cfg_path, vault_root=target)
+        ai_room = config_mgr.get_room_by_role("governance-and-engine")
+    except Exception as exc:
+        return UpdateResult(
+            success=False,
+            vault_root=target,
+            elapsed_seconds=round(time.perf_counter() - start_time, 4),
+            smoke_check_passed=False,
+            error_message=f"Nieprawidłowa konfiguracja lab.config.toml: {exc}",
+        )
+
+    target_skrypty = target / ai_room.path / "Skrypty"
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="lab_update_") as tmp:
+            _, src_skrypty, src_hooks = _resolve_update_payload(
+                payload_source=payload_source,
+                target=target,
+                ai_room_path=ai_room.path,
+                tmp_dir=Path(tmp),
+            )
+            if src_skrypty is None or not src_skrypty.is_dir():
+                return UpdateResult(
+                    success=False,
+                    vault_root=target,
+                    elapsed_seconds=round(time.perf_counter() - start_time, 4),
+                    smoke_check_passed=False,
+                    error_message="W źródle aktualizacji nie odnaleziono katalogu Skrypty/.",
+                )
+
+            # 1. Aktualizacja wyłącznie '<governance-and-engine>/Skrypty/'
+            if src_skrypty.resolve() == target_skrypty.resolve():
+                skipped_items.append(f"{ai_room.path}/Skrypty/ (źródło == cel)")
+            else:
+                target_skrypty.mkdir(parents=True, exist_ok=True)
+                for root_str, dirs, files in os.walk(src_skrypty):
+                    dirs[:] = [d for d in dirs if d not in {"__pycache__", ".pytest_cache"}]
+                    rel_dir = Path(root_str).relative_to(src_skrypty)
+                    dst_dir = target_skrypty / rel_dir
+                    dst_dir.mkdir(parents=True, exist_ok=True)
+                    for fname in files:
+                        if fname == ".DS_Store" or fname.endswith(".pyc"):
+                            continue
+                        src_f = Path(root_str) / fname
+                        dst_f = dst_dir / fname
+                        rel_vault = str(dst_f.relative_to(target))
+                        if dst_f.is_file():
+                            try:
+                                if src_f.read_bytes() == dst_f.read_bytes():
+                                    skipped_items.append(rel_vault)
+                                    continue
+                            except OSError:
+                                pass
+                        shutil.copy2(src_f, dst_f)
+                        if sys.platform == "darwin" and "integrations/raycast" in dst_f.as_posix() and dst_f.suffix == ".sh":
+                            os.chmod(dst_f, 0o755)
+                        updated_items.append(rel_vault)
+                if sys.platform == "darwin":
+                    clear_macos_quarantine(target_skrypty)
+
+            # 2. Aktualizacja konfiguracji agentów (.codex/config.toml, .agents/hooks.json)
+            llm_cfg = config_mgr._raw_data.get("ai_team", {}).get("llm", {})
+            provider_norm = str(llm_cfg.get("provider", "") or "").strip().lower() if isinstance(llm_cfg, dict) else ""
+
+            codex_cfg_path = target / ".codex" / "config.toml"
+            if provider_norm == "codex" or codex_cfg_path.is_file() or (target / ".codex").is_dir():
+                codex_toml = _build_codex_config_toml(ai_room.path)
+                tomllib.loads(codex_toml)
+                codex_cfg_path.parent.mkdir(parents=True, exist_ok=True)
+                existing_codex = codex_cfg_path.read_text(encoding="utf-8") if codex_cfg_path.is_file() else None
+                if existing_codex != codex_toml:
+                    if existing_codex is not None:
+                        _backup_if_exists(codex_cfg_path)
+                    codex_cfg_path.write_text(codex_toml, encoding="utf-8")
+                    updated_items.append(".codex/config.toml")
+                else:
+                    skipped_items.append(".codex/config.toml (aktualny)")
+
+            hooks_dst = target / ".agents" / "hooks.json"
+            if src_hooks is not None and (provider_norm == "antigravity" or hooks_dst.is_file()):
+                hooks_text = src_hooks.read_text(encoding="utf-8")
+                if ai_room.path != "08 Zespół AI":
+                    hooks_text = hooks_text.replace("08 Zespół AI/Skrypty/", f"{ai_room.path}/Skrypty/")
+                json.loads(hooks_text)
+                hooks_dst.parent.mkdir(parents=True, exist_ok=True)
+                existing_hooks = hooks_dst.read_text(encoding="utf-8") if hooks_dst.is_file() else None
+                if existing_hooks != hooks_text:
+                    if existing_hooks is not None:
+                        _backup_if_exists(hooks_dst)
+                    hooks_dst.write_text(hooks_text, encoding="utf-8")
+                    updated_items.append(".agents/hooks.json")
+                else:
+                    skipped_items.append(".agents/hooks.json (aktualny)")
+    except Exception as exc:
+        return UpdateResult(
+            success=False,
+            vault_root=target,
+            elapsed_seconds=round(time.perf_counter() - start_time, 4),
+            updated_items=updated_items,
+            skipped_items=skipped_items,
+            warnings=warnings,
+            smoke_check_passed=False,
+            error_message=f"Błąd podczas aktualizacji silnika: {exc}",
+        )
+
+    # 3. Smoke check: check_quality.py --summary
+    smoke_ok = True
+    smoke_output = ""
+    err_msg: Optional[str] = None
+    if run_smoke_check:
+        quality_script = target_skrypty / "check_quality.py"
+        if not quality_script.is_file():
+            smoke_ok = False
+            err_msg = f"Brak skryptu check_quality.py w '{quality_script}'."
+        else:
+            try:
+                proc = subprocess.run(
+                    [sys.executable, str(quality_script), "--vault-root", str(target), "--summary"],
+                    cwd=str(target),
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                )
+                smoke_output = (proc.stdout + ("\n" + proc.stderr if proc.stderr else "")).strip()
+                smoke_ok = proc.returncode == 0
+                if not smoke_ok:
+                    err_msg = f"Smoke check (check_quality.py --summary) zakończył się błędem (rc={proc.returncode})."
+            except Exception as exc:
+                smoke_ok = False
+                smoke_output = str(exc)
+                err_msg = f"Nie udało się uruchomić check_quality.py --summary: {exc}"
+
+    return UpdateResult(
+        success=smoke_ok,
+        vault_root=target,
+        elapsed_seconds=round(time.perf_counter() - start_time, 4),
+        updated_items=updated_items,
+        skipped_items=skipped_items,
+        warnings=warnings,
+        smoke_check_passed=smoke_ok,
+        smoke_check_output=smoke_output,
+        error_message=err_msg,
+    )
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    """Punkt wejścia CLI dla trybu aktualizacji silnika (python3 -m lab_core.installer --update)."""
+    parser = argparse.ArgumentParser(
+        description=f"LAB {LAB_VERSION} - Aktualizator silnika in-place",
+    )
+    parser.add_argument("--update", action="store_true", help="Aktualizuje silnik skryptów i hooki w istniejącym skarbcu")
+    parser.add_argument("--vault-root", "-v", type=str, default=".", help="Ścieżka do istniejącego skarbca LAB")
+    parser.add_argument("--payload", "-p", type=str, default=None, help="Źródło aktualizacji (katalog, plik .zip lub URL)")
+    parser.add_argument("--no-smoke-check", action="store_true", help="Pomiń check_quality.py --summary po aktualizacji")
+    parser.add_argument("--json", action="store_true", help="Zwróć wynik aktualizacji jako JSON")
+
+    args = parser.parse_args(argv)
+    if not args.update:
+        parser.print_help()
+        return 2
+
+    res = update_engine(
+        vault_root=args.vault_root,
+        payload_source=args.payload,
+        run_smoke_check=not args.no_smoke_check,
+    )
+    if args.json:
+        print(json.dumps(res.to_dict(), indent=2, ensure_ascii=False))
+    else:
+        status_icon = "✅" if res.success else "❌"
+        print(f"{status_icon} Aktualizacja LAB ({res.vault_root}) w {res.elapsed_seconds}s")
+        print(f"   Zaktualizowano plików : {len(res.updated_items)}")
+        print(f"   Pominięto (aktualne)  : {len(res.skipped_items)}")
+        if res.smoke_check_output:
+            print("\n--- Smoke Check (check_quality.py --summary) ---")
+            print(res.smoke_check_output)
+        if res.error_message:
+            print(f"\nBŁĄD: {res.error_message}", file=sys.stderr)
+    return 0 if res.success else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

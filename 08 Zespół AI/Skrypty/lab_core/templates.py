@@ -223,6 +223,11 @@ def generate_agents_contract(config: ConfigManager) -> str:
     if coord.assigned_name == "Adam":
         coord_instr = "Adamem"
 
+    try:
+        ai_room_path = config.get_room_by_role("governance-and-engine").path
+    except Exception:
+        ai_room_path = "08 Zespół AI"
+
     is_capsule = len(config.rooms) <= 5 or not any(r.role.lower() == "lifecycle-routines" for r in config.rooms.values())
     capsule_section = ""
     if is_capsule:
@@ -288,19 +293,29 @@ Celem użytkownika NIE jest wieczne mieszanie w narzędziach, lecz stabilny i ci
 1. **Oryginalny tekst użytkownika jest święty.** Nigdy nie usuwaj ani nie przepisuj myśli człowieka w Brudnopisie.
 2. **Aktywna Skrzynka ({config.get_room_by_role('ingestion').name}) opróżnia się do zera.**
 3. **Ścieżki i nazwy katalogów pobieraj wyłącznie przez moduł `core_config.ConfigManager` w oparciu o `lab.config.toml`.** Nigdy nie hardkoduj nazw folderów.
-4. **Każda sesja kończy się procedurą `/checkpoint`.**
+4. **Każda sesja kończy się procedurą checkpoint.** W środowiskach CLI (OpenAI Codex CLI, Gemini CLI), gdzie nie ma natywnego skilla `$checkpoint` ani komendy `/checkpoint`, uruchamiaj zamknięcie przez terminal: `python3 "{ai_room_path}/Skrypty/checkpoint.py"` (także na naturalne polecenie użytkownika „zrób checkpoint”).
 5. **Zakaz samowolnego dopisywania zadań do Warsztatu i Sprintu.** Luźne idee i nieuporządkowane myśli człowieka podlegają wyłącznie propozycji na czacie i wymagają wyraźnej autoryzacji przed jakimkolwiek zapisem (ochrona egzekwowana w kodzie `release_guard.py`).
-6. **Obowiązkowa telemetria tokenów.** {coord.assigned_name} raportuje aktualne zużycie okna kontekstowego w stopce każdej wypowiedzi wyłącznie na podstawie odczytu z `PYTHONPATH="08 Zespół AI/Skrypty" python3 -W ignore::RuntimeWarning:runpy -m lab_core.telemetry --statusline` (lub pola `telemetry_statusline` z `session_bootstrap.py`), w sztywnym wzorcu: `*Telemetria: 🧠 <X>k / <Limit>k (<Y>%) <ikona> | ...*` (gdzie `<Limit>k` pochodzi z `[telemetry].session_token_budget` w `lab.config.toml`, domyślnie `150k`; zakaz ręcznego szacowania i zakaz limitu `1 000 000`).
+6. **Obowiązkowa telemetria tokenów.** {coord.assigned_name} raportuje aktualne zużycie okna kontekstowego w stopce każdej wypowiedzi wyłącznie na podstawie odczytu z `PYTHONPATH="{ai_room_path}/Skrypty" python3 -W ignore::RuntimeWarning:runpy -m lab_core.telemetry --statusline` (lub pola `telemetry_statusline` z `session_bootstrap.py`), w sztywnym wzorcu: `*Telemetria: 🧠 <X>k / <Limit>k (<Y>%) <ikona> | ...*` (gdzie `<Limit>k` pochodzi z `[telemetry].session_token_budget` w `lab.config.toml`, domyślnie `150k`; zakaz ręcznego szacowania i zakaz limitu `1 000 000`).
 7. **Automatyczna flaga `consumed: false` dla notatek.** Każda notatka techniczna, instruktażowa lub referencyjna tworzona w pokoju Zasobów oraz w procedurach drenażu bezwzględnie otrzymuje w nagłówku YAML pole `consumed: false`.
 8. **Twarde reguły delegacji i wywoływania subagentów (Ochrona okna i domeny):**
    - **Obowiązkowa delegacja do subagenta:** {coord.assigned_name} bezwzględnie deleguje zadanie do wyspecjalizowanego subagenta, gdy zadanie wymaga masowej analizy źródeł (>3 dokumentów), przeszukiwania sieci lub należy do domeny specjalisty ({spec_names}).
    - **Zasada Destylatu SAT:** Subagent operuje w izolowanej piaskownicy i zwraca do {coord.assigned_name}a wyłącznie zwięzłą syntezę SAT (300–600 tokenów). Limit egzekwuje w kodzie `subagent_gate.py` (walidacja + rejestr dispatchy).
    - **Autonomia Koordynatora:** {coord.assigned_name} operuje bezpośrednio w sesji głównej w zadaniach moderacji dialogu z człowiekiem, Agendy Dnia, szybkich edycji, uciszonych narzędzi i telemetrii.
-   - **Klauzula Circuit Breaker (Fail-Fast na otwarciu sesji):** Na otwarcie sesji {coord.assigned_name} pobiera stan środowiska wyłącznie jednym poleceniem maszynowym: `python3 "08 Zespół AI/Skrypty/session_bootstrap.py" --json`. W razie wykrycia statusu `BROKEN`, {coord.assigned_name} ma bezwzględny zakaz wchodzenia w diagnostykę w sesji głównej (żelazny zakaz pętli `read_file`/`grep`). Jedyną dozwoloną akcją jest natychmiastowe przekazanie wygenerowanego biletu (`ticket`) do Maksa celem usunięcia blokera w izolowanym subagencie.
+   - **Klauzula Circuit Breaker (Fail-Fast na otwarciu sesji):** Na otwarcie sesji {coord.assigned_name} pobiera stan środowiska wyłącznie jednym poleceniem maszynowym: `python3 "{ai_room_path}/Skrypty/session_bootstrap.py" --json`. W razie wykrycia statusu `BROKEN`, {coord.assigned_name} ma bezwzględny zakaz wchodzenia w diagnostykę w sesji głównej (żelazny zakaz pętli `read_file`/`grep`). Jedyną dozwoloną akcją jest natychmiastowe przekazanie wygenerowanego biletu (`ticket`) do Maksa celem usunięcia blokera w izolowanym subagencie.
 9. **Zasada Czystego Języka Inżynierskiego (Zakaz Nowomowy AI i Personifikacji):** Bezwzględny zakaz tworzenia dokumentów meta-refleksyjnych o „tożsamości”, „świadomości” czy „autorefleksji” systemu. Styl komunikacji i dokumentacji jest oszczędny, bezosobowy i inżynierski: fakty, schematy, pliki, testy jednostkowe i mierzalne rezultaty.
 10. **Mandat Koordynatora i Doradztwo Oparte na Dowodach (Evidence-Based Executive Advisory):**
     - **Zakaz Samotnego Deliberowania:** {coord.assigned_name} w sesji głównej ma bezwzględny zakaz samodzielnego teoretyzowania i tworzenia tez „z głowy” bez bezpośredniego oparcia w faktach i destylatach subagentów.
     - **Procedura Doradcza:** Każda analiza realizowana jest wg procedury: [Dekompozycja problemu -> Dyspozycja do subagentów -> Walidacja destylatów SAT -> Synteza wariantów A/B/C z analizą ryzyk].
     - **Ugruntowane Stanowisko Sparingowe:** Stanowisko krytyczne i sparingowe {coord.assigned_name}a musi być w 100% ugruntowane w twardych faktach i destylatach SAT subagentów sztabu.
     - **Rygor Default-Deny & Anti-Sycophancy:** Pierwsze zdanie wypowiedzi {coord.assigned_name}a NIGDY nie zawiera pochlebstw ani ocen człowieka („masz rację”, „świetne pytanie”). Pierwsze zdanie to natychmiastowe sedno sprawy: czysty fakt, decyzja, precyzyjne pytanie inżynieryjne lub meldunek z wykonania.
+
+---
+
+## Komendy Operacyjne w Środowiskach CLI (Codex CLI / Gemini CLI)
+
+Gdy środowisko CLI nie obsługuje slash-komend (`/checkpoint`) ani skilli (`$checkpoint`), operacje systemowe wykonuje się przez terminalowe polecenia Pythona (albo naturalne polecenie użytkownika, np. „zrób checkpoint”):
+- **Bootstrap sesji:** `python3 "{ai_room_path}/Skrypty/session_bootstrap.py" --json`
+- **Audyt jakości:** `python3 "{ai_room_path}/Skrypty/check_quality.py" --summary`
+- **Telemetria (statusline):** `PYTHONPATH="{ai_room_path}/Skrypty" python3 -W ignore::RuntimeWarning:runpy -m lab_core.telemetry --statusline`
+- **Zamknięcie sesji (checkpoint):** `python3 "{ai_room_path}/Skrypty/checkpoint.py"`
 """

@@ -610,6 +610,54 @@ class TestHybridLegacyAndIngestGate(BaseSandboxTest):
         self.assertIn("> [!info] Metadane źródłowe", text)
         self.assertIn("https://example.com/art", text)
 
+    def test_drain_inbox_converts_capture_and_missing_type_to_reference_note(self) -> None:
+        """Drenaż notatki z type: \"capture\" lub bez type do 06 Zasoby/Notatki/ konwertuje YAML do note/reference."""
+        from lab_core.markdown import parse_frontmatter
+
+        test_root = self.sandbox_dir / "vault_capture_convert"
+        (test_root / "01 Skrzynka").mkdir(parents=True, exist_ok=True)
+        (test_root / "06 Zasoby" / "Notatki").mkdir(parents=True, exist_ok=True)
+        shutil.copy2(self.vault_root / "lab.config.toml", test_root / "lab.config.toml")
+
+        capture_file = test_root / "01 Skrzynka" / "Capture_Clip.md"
+        capture_file.write_text(
+            '---\ntype: "capture"\nsource_url: https://example.com/clip\nconsumed: false\ntags: [ai, sat]\n---\n'
+            "# Przechwycony Artykuł\n\nWażna treść z sieci.\n",
+            encoding="utf-8",
+        )
+
+        no_type_file = test_root / "01 Skrzynka" / "No_Type_Clip.md"
+        no_type_file.write_text(
+            "---\nsource_url: https://example.com/notype\nauthor: Jan Kowalski\n---\n"
+            "# Notatka bez typu\n\nTreść bez pola type.\n",
+            encoding="utf-8",
+        )
+
+        drainer = InboxDrainer(vault_root=test_root)
+        today_str = datetime.date.today().isoformat()
+
+        dest_capture = drainer.archive_item("Capture_Clip.md")
+        self.assertEqual(dest_capture.parent, test_root / "06 Zasoby" / "Notatki")
+        fm_cap, body_cap = parse_frontmatter(dest_capture)
+        self.assertEqual(fm_cap.get("type"), "note")
+        self.assertEqual(fm_cap.get("note_type"), "reference")
+        self.assertEqual(fm_cap.get("created"), today_str)
+        self.assertIs(fm_cap.get("consumed"), False)
+        self.assertEqual(fm_cap.get("source_url"), "https://example.com/clip")
+        self.assertEqual(fm_cap.get("tags"), ["ai", "sat"])
+        self.assertIn("Ważna treść z sieci.", body_cap)
+        self.assertIn("> [!info] Metadane źródłowe", body_cap)
+
+        dest_notype = drainer.archive_item("No_Type_Clip.md")
+        self.assertEqual(dest_notype.parent, test_root / "06 Zasoby" / "Notatki")
+        fm_no, body_no = parse_frontmatter(dest_notype)
+        self.assertEqual(fm_no.get("type"), "note")
+        self.assertEqual(fm_no.get("note_type"), "reference")
+        self.assertEqual(fm_no.get("created"), today_str)
+        self.assertIs(fm_no.get("consumed"), False)
+        self.assertEqual(fm_no.get("author"), "Jan Kowalski")
+        self.assertIn("Treść bez pola type.", body_no)
+
 
 class TestEngineScriptsHygiene(BaseSandboxTest):
     """Testy higieny katalogu głównego 08 Zespół AI/Skrypty/ (allowlist punktów wejścia)."""
