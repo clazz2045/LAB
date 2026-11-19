@@ -486,6 +486,8 @@ class TestConfigPortability(unittest.TestCase):
 
     def test_karta_startowa_clean_of_legacy_versions(self):
         docs_dir = _root_dir / "03 Projekty" / "PR-018 LAB Open Source"
+        if not docs_dir.is_dir():
+            docs_dir = _root_dir / "03 Projekty" / "_archiwum" / "PR-018 LAB Open Source"
         for fname in ("Karta_Startowa_LAB.md", "Karta_Startowa_LAB.html"):
             fpath = docs_dir / fname
             self.assertTrue(fpath.is_file(), f"Brak pliku {fpath}")
@@ -687,6 +689,8 @@ class TestConfigPortability(unittest.TestCase):
 
         repo_root = Path(__file__).resolve().parents[3]
         prod_dir = repo_root / "03 Projekty" / "PR-018 LAB Open Source" / "Produkt"
+        if not prod_dir.is_dir():
+            prod_dir = repo_root / "03 Projekty" / "_archiwum" / "PR-018 LAB Open Source" / "Produkt"
         for base in (repo_root, prod_dir):
             cmd_f = base / "LAB-Update.command"
             bat_f = base / "LAB-Update.bat"

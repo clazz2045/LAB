@@ -670,6 +670,42 @@ class TestHooksJsonConfig(unittest.TestCase):
         }, vault_root=vault_root)
         self.assertEqual(res_bad_patch["decision"], "deny")
 
+    def test_codex_serialized_json_and_exec_command_and_apply_patch(self) -> None:
+        from lab_core.pre_tool_guard import evaluate_pre_tool
+
+        vault_root = Path(__file__).resolve().parents[3]
+
+        # 1. exec_command w SHELL_TOOLS ze zserializowanym JSON w arguments
+        res_exec_ok = evaluate_pre_tool({
+            "name": "exec_command",
+            "arguments": json.dumps({"cmd": "git status"}),
+        }, vault_root=vault_root)
+        self.assertEqual(res_exec_ok["decision"], "allow")
+
+        res_exec_deny = evaluate_pre_tool({
+            "name": "exec_command",
+            "arguments": json.dumps({"cmd": "grep -rn secret ."}),
+        }, vault_root=vault_root)
+        self.assertEqual(res_exec_deny["decision"], "deny")
+
+        # 2. apply_patch w WRITE_TOOLS ze zserializowanym JSON w args na plik kodu -> deny
+        res_patch_code = evaluate_pre_tool({
+            "tool_name": "apply_patch",
+            "args": json.dumps({
+                "patch": "*** Update File: 08 Zespół AI/Skrypty/lab_core/pre_tool_guard.py\n@@ -1 +1 @@\n",
+            }),
+        }, vault_root=vault_root)
+        self.assertEqual(res_patch_code["decision"], "deny")
+
+        # 3. apply_patch na Agendę Roboczą w Warsztacie -> allow
+        res_patch_agenda = evaluate_pre_tool({
+            "tool_name": "apply_patch",
+            "arguments": json.dumps({
+                "patch": "*** Update File: 02 Warsztat/2026-11-19 – Agenda Robocza.md\n@@ -1 +1 @@\n",
+            }),
+        }, vault_root=vault_root)
+        self.assertEqual(res_patch_agenda["decision"], "allow")
+
 
 if __name__ == "__main__":
     unittest.main()

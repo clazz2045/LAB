@@ -1153,6 +1153,18 @@ created: {time.strftime('%Y-%m-%d')}
                     clear_macos_quarantine(dst_rf)
                 self.created.append(root_file)
 
+        # Deterministycznie wymuś uprawnienia 0o755 i wyczyść kwarantannę macOS dla launcherów .command w korzeniu
+        for cmd_name in ("LAB-Installer.command", "LAB-Update.command"):
+            cmd_path = config.vault_root / cmd_name
+            if cmd_path.is_file():
+                if os.name == "posix":
+                    try:
+                        os.chmod(cmd_path, 0o755)
+                    except OSError:
+                        pass
+                if sys.platform == "darwin":
+                    clear_macos_quarantine(cmd_path)
+
         # Kopiuj .agents/hooks.json (bramka Antigravity)
         src_hooks = src_vault_root / ".agents" / "hooks.json"
         if src_hooks.is_file():
@@ -1487,6 +1499,19 @@ def _safe_extract_zip(zip_path: Path, dest_dir: Path) -> Path:
             except ValueError as exc:
                 raise InstallerError(f"Niedozwolona ścieżka w archiwum ZIP: {member.filename}") from exc
         zf.extractall(dest_resolved)
+        for member in zf.infolist():
+            member_path = (dest_resolved / member.filename).resolve()
+            if member_path.is_file():
+                mode = (member.external_attr >> 16) & 0o777
+                if member_path.suffix in {".command", ".sh"}:
+                    mode = mode or 0o755
+                if mode and os.name == "posix":
+                    try:
+                        os.chmod(member_path, mode)
+                    except OSError:
+                        pass
+                if sys.platform == "darwin" and member_path.suffix in {".command", ".sh"}:
+                    clear_macos_quarantine(member_path)
     return dest_resolved
 
 
@@ -1628,7 +1653,7 @@ def update_engine(
 
     try:
         with tempfile.TemporaryDirectory(prefix="lab_update_") as tmp:
-            _, src_skrypty, src_hooks = _resolve_update_payload(
+            payload_root, src_skrypty, src_hooks = _resolve_update_payload(
                 payload_source=payload_source,
                 target=target,
                 ai_room_path=ai_room.path,
@@ -1706,6 +1731,45 @@ def update_engine(
                     updated_items.append(".agents/hooks.json")
                 else:
                     skipped_items.append(".agents/hooks.json (aktualny)")
+
+            # 2c. Aktualizacja i zabezpieczenie launcherów .command/.bat w korzeniu skarbca
+            src_root_candidates = [
+                payload_root,
+                payload_root.parent if payload_root else None,
+            ]
+            for root_launcher in (
+                "LAB-Installer.command",
+                "LAB-Installer.bat",
+                "LAB-Update.command",
+                "LAB-Update.bat",
+            ):
+                for cand_root in src_root_candidates:
+                    if cand_root and (cand_root / root_launcher).is_file():
+                        src_lf = cand_root / root_launcher
+                        dst_lf = target / root_launcher
+                        if dst_lf.is_file():
+                            try:
+                                if src_lf.read_bytes() == dst_lf.read_bytes():
+                                    skipped_items.append(root_launcher)
+                                    break
+                            except OSError:
+                                pass
+                            _backup_if_exists(dst_lf)
+                        shutil.copy2(src_lf, dst_lf)
+                        updated_items.append(root_launcher)
+                        break
+
+            # Deterministycznie wymuś uprawnienia 0o755 i kwarantannę macOS dla każdego launchera .command w korzeniu
+            for cmd_name in ("LAB-Installer.command", "LAB-Update.command"):
+                cmd_p = target / cmd_name
+                if cmd_p.is_file():
+                    if os.name == "posix":
+                        try:
+                            os.chmod(cmd_p, 0o755)
+                        except OSError:
+                            pass
+                    if sys.platform == "darwin":
+                        clear_macos_quarantine(cmd_p)
     except Exception as exc:
         return UpdateResult(
             success=False,

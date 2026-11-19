@@ -578,12 +578,12 @@ def _coerce_args_dict(args_val: Any) -> Dict[str, Any]:
         return args_val
     if isinstance(args_val, str):
         raw = args_val.strip()
-        if raw.startswith("{"):
+        if raw:
             try:
                 parsed = json.loads(raw)
                 if isinstance(parsed, dict):
                     return parsed
-            except json.JSONDecodeError:
+            except (json.JSONDecodeError, ValueError):
                 pass
         return {"input": args_val}
     return {}
@@ -603,7 +603,21 @@ def _extract_patch_paths(patch_text: str) -> List[str]:
             p = s[6:].strip()
             if p:
                 paths.append(p)
-    return paths
+        elif s.startswith("--- a/"):
+            p = s[6:].strip()
+            if p and p != "/dev/null":
+                paths.append(p)
+        elif s.startswith("Index: "):
+            p = s[7:].strip()
+            if p:
+                paths.append(p)
+        elif s.startswith("diff --git "):
+            parts = s.split()
+            if len(parts) >= 4:
+                p = parts[-1].removeprefix("b/").strip()
+                if p:
+                    paths.append(p)
+    return list(dict.fromkeys(paths))
 
 
 def extract_event_data(payload: Dict[str, Any]) -> Tuple[str, Dict[str, Any], Optional[str]]:
@@ -614,14 +628,39 @@ def extract_event_data(payload: Dict[str, Any]) -> Tuple[str, Dict[str, Any], Op
     if "toolCall" in payload and isinstance(payload["toolCall"], dict):
         tc = payload["toolCall"]
         tool_name = str(tc.get("name") or "")
-        tool_args = _coerce_args_dict(tc.get("args"))
+        raw_args = tc.get("args") if tc.get("args") is not None else tc.get("arguments")
+        tool_args = _coerce_args_dict(raw_args)
     elif "tool_name" in payload:
         tool_name = str(payload.get("tool_name") or "")
-        raw_args = payload.get("tool_input") if payload.get("tool_input") is not None else payload.get("tool_args")
+        raw_args = (
+            payload.get("tool_input")
+            if payload.get("tool_input") is not None
+            else payload.get("tool_args")
+            if payload.get("tool_args") is not None
+            else payload.get("arguments")
+            if payload.get("arguments") is not None
+            else payload.get("args")
+        )
+        tool_args = _coerce_args_dict(raw_args)
+    elif "function" in payload and isinstance(payload["function"], dict):
+        fn = payload["function"]
+        tool_name = str(fn.get("name") or "")
+        raw_args = fn.get("arguments") if fn.get("arguments") is not None else fn.get("args")
         tool_args = _coerce_args_dict(raw_args)
     elif "name" in payload:
         tool_name = str(payload.get("name") or "")
-        tool_args = _coerce_args_dict(payload.get("args") or payload.get("input"))
+        raw_args = (
+            payload.get("arguments")
+            if payload.get("arguments") is not None
+            else payload.get("args")
+            if payload.get("args") is not None
+            else payload.get("tool_input")
+            if payload.get("tool_input") is not None
+            else payload.get("tool_args")
+            if payload.get("tool_args") is not None
+            else payload.get("input")
+        )
+        tool_args = _coerce_args_dict(raw_args)
 
     transcript_path = (
         payload.get("transcriptPath")
@@ -688,14 +727,14 @@ def evaluate_pre_tool(
             or tool_args.get("FilePath")
             or ""
         )
-        if raw_path:
-            if is_allowed_coordinator_write(raw_path, root):
+        patch_text = str(tool_args.get("patch") or tool_args.get("input") or tool_args.get("diff") or "")
+        patch_paths = _extract_patch_paths(patch_text) if patch_text else []
+        all_targets = ([raw_path] if raw_path else []) + patch_paths
+
+        if all_targets:
+            if all(is_allowed_coordinator_write(p, root) for p in all_targets):
                 return {"decision": "allow"}
             return {"decision": "deny", "reason": DENY_REASON_WRITE}
-        patch_text = str(tool_args.get("patch") or tool_args.get("input") or "")
-        patch_paths = _extract_patch_paths(patch_text) if patch_text else []
-        if patch_paths and all(is_allowed_coordinator_write(p, root) for p in patch_paths):
-            return {"decision": "allow"}
         return {"decision": "deny", "reason": DENY_REASON_WRITE}
 
     if tool_name_lower in SHELL_TOOLS:

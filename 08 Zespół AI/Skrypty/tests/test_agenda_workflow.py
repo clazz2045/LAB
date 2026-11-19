@@ -212,12 +212,47 @@ class TestUnprocessedThoughtBlocks(unittest.TestCase):
             ctx = QualityContext(vault_root=vault, config=cfg, strict_checkpoint=True)
             WorkshopAndThoughtsInspector().inspect(ctx)
 
-            rollover_errors = [f for f in ctx.findings if f.level == "error" and f.category == "agenda_rollover"]
+            rollover_warnings = [f for f in ctx.findings if f.level == "warning" and f.category == "agenda_rollover"]
             thought_errors = [f for f in ctx.findings if f.level == "error" and f.category == "agenda_thoughts"]
-            self.assertEqual(len(rollover_errors), 1)
-            self.assertIn("1 otwartych zadań", rollover_errors[0].message)
-            self.assertIn("1 nieprzetworzonych bloków myśli", rollover_errors[0].message)
+            self.assertEqual(len(rollover_warnings), 1)
+            self.assertIn("1 otwartych zadań", rollover_warnings[0].message)
+            self.assertIn("1 nieprzetworzonych bloków myśli", rollover_warnings[0].message)
             self.assertEqual(len(thought_errors), 1)
+
+    def test_workshop_inspector_rollover_fuzzy_and_keyword_match(self):
+        with tempfile.TemporaryDirectory() as tmp_str:
+            vault = Path(tmp_str) / "Vault"
+            install_lab_vault(vault, skip_preflight=True, run_smoke_check=False)
+            ws_dir = vault / "02 Warsztat"
+            arch_dir = ws_dir / "_archiwum" / "2026" / "11"
+            arch_dir.mkdir(parents=True, exist_ok=True)
+
+            (arch_dir / "2026-11-17 – Agenda Robocza.md").write_text(
+                "---\ntype: workbench-agenda\nstatus: archived\n---\n\n"
+                "## 🎯 Główne Wątki Robocze na Dziś\n\n"
+                "- [ ] [ZADANIE] Zaimplementować adapter wieloplatformowy dla modeli Codex i Claude\n"
+                "- [ ] [PROMPT] Przebudować strukturę installer.py pod kątem uprawnień POSIX 0755\n\n"
+                "---\n\n"
+                "## ✍️ Dosłowny Zapis Porannych Myśli Zbigniew\n\n",
+                encoding="utf-8",
+            )
+            # Dziś użytkownik nieco przeredagował zadania (fuzzy ratio >= 0.50 lub zbieżność słów kluczowych)
+            (ws_dir / "2026-11-18 – Agenda Robocza.md").write_text(
+                "---\ntype: workbench-agenda\nstatus: in_progress\n---\n\n"
+                "## 🎯 Główne Wątki Robocze na Dziś\n\n"
+                "- [ ] [ZADANIE] Implementacja adaptera dla modeli Codex i Claude\n"
+                "- [ ] [PROMPT] Przebudowa installer.py: uprawnienia POSIX 0755 launchera\n\n"
+                "---\n\n"
+                "## ✍️ Dosłowny Zapis Porannych Myśli Zbigniew\n\n",
+                encoding="utf-8",
+            )
+
+            cfg = ConfigManager(vault_root=vault)
+            ctx = QualityContext(vault_root=vault, config=cfg)
+            WorkshopAndThoughtsInspector().inspect(ctx)
+
+            rollover_findings = [f for f in ctx.findings if f.category == "agenda_rollover"]
+            self.assertEqual(rollover_findings, [])
 
     def test_workshop_inspector_rollover_allows_updated_trailing_progress_note(self):
         with tempfile.TemporaryDirectory() as tmp_str:

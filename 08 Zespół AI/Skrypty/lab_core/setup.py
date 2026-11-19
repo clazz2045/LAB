@@ -594,6 +594,8 @@ def _load_starter_card_html() -> str:
             for rel in public_docs:
                 if isinstance(rel, str) and rel.endswith("Karta_Startowa_LAB.html"):
                     candidates.append(_root_dir / rel)
+                    if "03 Projekty/" in rel:
+                        candidates.append(_root_dir / rel.replace("03 Projekty/", "03 Projekty/_archiwum/", 1))
     except Exception:
         pass
     for path in candidates:

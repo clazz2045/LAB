@@ -632,6 +632,11 @@ class GitSyncManager:
             if not isinstance(raw_rel, str) or not raw_rel.strip():
                 continue
             src_f = (self.vault_root / raw_rel.strip()).resolve()
+            if not src_f.is_file() and "03 Projekty/" in raw_rel:
+                arch_rel = raw_rel.strip().replace("03 Projekty/", "03 Projekty/_archiwum/", 1)
+                arch_f = (self.vault_root / arch_rel).resolve()
+                if arch_f.is_file():
+                    src_f = arch_f
             try:
                 src_f.relative_to(self.vault_root)
             except ValueError:
@@ -676,7 +681,11 @@ class GitSyncManager:
                         arcname = rel.name
                     else:
                         arcname = f".lab-payload/{rel.as_posix()}"
-                    zf.write(fpath, arcname=arcname)
+                    zinfo = zipfile.ZipInfo.from_file(fpath, arcname=arcname)
+                    if fpath.suffix in {".command", ".sh"} or arcname.endswith(".command") or arcname.endswith(".sh"):
+                        zinfo.external_attr = 0o100755 << 16
+                    with open(fpath, "rb") as fp:
+                        zf.writestr(zinfo, fp.read())
         return out_path
 
     def init_and_push(

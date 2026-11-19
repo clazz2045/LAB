@@ -153,6 +153,9 @@ class TestGitSyncAndQG2(unittest.TestCase):
                 top_files,
                 {"LAB-Installer.command", "LAB-Installer.bat", "LAB-Update.command", "LAB-Update.bat"},
             )
+            for cmd_name in ("LAB-Installer.command", "LAB-Update.command"):
+                mode = (zf.getinfo(cmd_name).external_attr >> 16) & 0o777
+                self.assertEqual(mode, 0o755, f"{cmd_name} w ZIP musi mieć uprawnienia POSIX 0755")
             payload_names = [n for n in names if n.startswith(".lab-payload/")]
             self.assertEqual(len(names) - len(top_files), len(payload_names))
             self.assertIn(".lab-payload/lab.config.example.toml", payload_names)

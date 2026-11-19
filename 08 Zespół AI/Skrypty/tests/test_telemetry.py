@@ -371,6 +371,37 @@ class TestCheckpointIntegration(unittest.TestCase):
         finally:
             conn.close()
 
+    def test_antigravity_missing_or_stale_transcripts_raises_not_found_without_cross_platform_leak(self) -> None:
+        from lab_core.telemetry import TranscriptNotFoundError, find_latest_transcript, estimate_fallback_telemetry
+        from unittest import mock
+
+        empty_brain = self.vault / "empty_brain"
+        empty_brain.mkdir(parents=True, exist_ok=True)
+
+        fake_claude = self.vault / "fake_claude"
+        fake_claude.mkdir(parents=True, exist_ok=True)
+        (fake_claude / "claude_session.jsonl").write_text('{"type": "message"}\n', encoding="utf-8")
+
+        fake_codex = self.vault / "fake_codex"
+        fake_codex.mkdir(parents=True, exist_ok=True)
+        (fake_codex / "rollout-2026.jsonl").write_text('{"type": "session_meta"}\n', encoding="utf-8")
+
+        # Gdy provider to antigravity, brak transkryptów w brain musi rzucić TranscriptNotFoundError
+        # i nie może zwrócić plików z Claude ani Codex
+        with mock.patch("lab_core.telemetry.resolve_llm_provider", return_value="antigravity"):
+            with self.assertRaises(TranscriptNotFoundError):
+                find_latest_transcript(
+                    brain_dir=empty_brain,
+                    claude_dir=fake_claude,
+                    codex_dir=fake_codex,
+                    vault_root=self.vault,
+                )
+
+        # Fallback działa bezpiecznie i zwraca obiekt TokenMetrics z oszacowaniem
+        fb = estimate_fallback_telemetry(vault_root=self.vault, limit=150_000)
+        self.assertIsNotNone(fb)
+        self.assertEqual(fb.limit, 150_000)
+
 
 if __name__ == "__main__":
     unittest.main()

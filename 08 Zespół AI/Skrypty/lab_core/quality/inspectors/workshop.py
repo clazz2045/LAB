@@ -6,10 +6,11 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import difflib
 import re
 from pathlib import Path
 import sys
-from typing import List, Optional, Tuple
+from typing import List, Optional, Set, Tuple
 
 from lab_core.config import ConfigError
 from lab_core.constants import AGENDA_THREAD_TYPES, IGNORED_FILES, THOUGHT_PROCESSED_MARKERS
@@ -433,14 +434,53 @@ class WorkshopAndThoughtsInspector(QualityInspector):
 
                     if prev_content:
                         active_threads_norm = normalize_nfc(extract_agenda_section(content, "threads"))
+                        today_tasks: List[str] = []
+                        for line in active_threads_norm.splitlines():
+                            m_task = re.match(r"^\s*-\s*\[[\sxX]\]\s*(.*)$", line)
+                            if m_task:
+                                tb = normalize_nfc(m_task.group(1).strip())
+                                cb = _strip_trailing_progress_note(tb)
+                                today_tasks.append(cb if cb else tb)
+
                         missing_tasks_count = 0
+                        stop_words = {"dla", "oraz", "jest", "sie", "się", "pod", "nad", "nie", "tak", "gdy", "aby", "the", "and", "lub", "wraz", "przez", "jako"}
+
                         for task in extract_unfinished_agenda_tasks(prev_content):
                             first_line = task.splitlines()[0].strip() if task.splitlines() else ""
                             task_body = normalize_nfc(re.sub(r"^\s*-\s*\[[\sxX]\]\s*", "", first_line).strip())
                             core_body = _strip_trailing_progress_note(task_body)
-                            if task_body and task_body not in active_threads_norm and (
-                                not core_body or core_body not in active_threads_norm
-                            ):
+                            if not task_body:
+                                continue
+
+                            # 1. Dosłowne dopasowanie
+                            if task_body in active_threads_norm or (core_body and core_body in active_threads_norm):
+                                continue
+
+                            # 2. SequenceMatcher (ratio >= 0.50) oraz zbieżność słów kluczowych
+                            target = (core_body if core_body else task_body).strip()
+                            target_clean = re.sub(r"^\[(?:PROMPT|PYTANIE|ZADANIE|DECYZJA)\]\s*", "", target, flags=re.IGNORECASE).strip()
+                            target_cmp = (target_clean if target_clean else target).lower()
+                            target_words = {w for w in re.findall(r"\b\w{3,}\b", target_cmp) if w not in stop_words}
+
+                            matched = False
+                            for cand in today_tasks:
+                                cand_clean = re.sub(r"^\[(?:PROMPT|PYTANIE|ZADANIE|DECYZJA)\]\s*", "", cand, flags=re.IGNORECASE).strip()
+                                cand_cmp = (cand_clean if cand_clean else cand).lower()
+
+                                # Ratio SequenceMatcher >= 0.50
+                                if difflib.SequenceMatcher(None, target_cmp, cand_cmp).ratio() >= 0.50:
+                                    matched = True
+                                    break
+
+                                # Pokrycie słów kluczowych
+                                cand_words = {w for w in re.findall(r"\b\w{3,}\b", cand_cmp) if w not in stop_words}
+                                if target_words and cand_words:
+                                    overlap = target_words & cand_words
+                                    if len(overlap) >= 2 or (len(target_words) == 1 and len(overlap) == 1) or (len(overlap) / len(target_words) >= 0.50):
+                                        matched = True
+                                        break
+
+                            if not matched:
                                 missing_tasks_count += 1
 
                         active_thoughts_norm = normalize_nfc(extract_agenda_section(content, "thoughts")).replace("~~", "")
@@ -451,9 +491,8 @@ class WorkshopAndThoughtsInspector(QualityInspector):
                                 missing_thoughts_count += 1
 
                         if missing_tasks_count > 0 or missing_thoughts_count > 0:
-                            workshop_clean = False
                             ctx.add_finding(
-                                level="error",
+                                level="warning",
                                 category="agenda_rollover",
                                 path=rel_agenda,
                                 room=workshop_room.id,

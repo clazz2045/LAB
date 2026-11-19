@@ -461,7 +461,7 @@ def find_latest_transcript(
 
     # 0. Sprawdzenie aktywnej konwersacji ze środowiska wykonawczego Antigravity
     env_meta = os.environ.get("ANTIGRAVITY_SOURCE_METADATA")
-    if env_meta and base_dir.is_dir():
+    if not brain_dir and env_meta and base_dir.is_dir():
         try:
             meta = json.loads(env_meta)
             cid = meta.get("tool", {}).get("conversationId")
@@ -469,6 +469,12 @@ def find_latest_transcript(
                 cand = base_dir / cid / ".system_generated" / "logs" / "transcript.jsonl"
                 if cand.is_file():
                     return cand
+                # Jeśli zidentyfikowano bieżącą sesję Antigravity, ale transkrypt jeszcze nie powstał
+                raise TranscriptNotFoundError(
+                    f"Bieżąca sesja Antigravity '{cid}' nie posiada jeszcze pliku transkryptu (brak danych bieżącej sesji)."
+                )
+        except TranscriptNotFoundError:
+            raise
         except Exception:
             pass
 
@@ -480,16 +486,37 @@ def find_latest_transcript(
         c_dir = Path(claude_dir).expanduser().resolve() if claude_dir else None
         claude_candidates = _find_claude_transcripts(c_dir)
 
-        if provider == "codex" and codex_candidates:
-            codex_sorted = sorted(codex_candidates, key=lambda p: p.stat().st_mtime, reverse=True)
-            if target_root is not None:
-                for p in codex_sorted[:20]:
-                    if _codex_rollout_matches_vault(p, target_root):
-                        return p
-            return codex_sorted[0]
+        if provider == "codex":
+            if codex_candidates:
+                codex_sorted = sorted(codex_candidates, key=lambda p: p.stat().st_mtime, reverse=True)
+                if target_root is not None:
+                    for p in codex_sorted[:20]:
+                        if _codex_rollout_matches_vault(p, target_root):
+                            return p
+                return codex_sorted[0]
+            raise TranscriptNotFoundError("Dla dostawcy 'codex' nie odnaleziono żadnego pliku transkryptu (~/.codex/sessions/**/rollout-*.jsonl).")
 
-        if provider == "claude" and claude_candidates:
-            return max(claude_candidates, key=lambda p: p.stat().st_mtime)
+        if provider == "claude":
+            if claude_candidates:
+                return max(claude_candidates, key=lambda p: p.stat().st_mtime)
+            raise TranscriptNotFoundError("Dla dostawcy 'claude' nie odnaleziono żadnego pliku transkryptu (~/.claude/projects/*/*.jsonl).")
+
+        if provider == "antigravity":
+            candidates: List[Path] = []
+            if base_dir.is_dir():
+                pattern = "*/.system_generated/logs/transcript.jsonl"
+                try:
+                    candidates.extend(p for p in base_dir.glob(pattern) if p.is_file())
+                except (PermissionError, OSError):
+                    pass
+            if not candidates:
+                raise TranscriptNotFoundError(f"Dla dostawcy 'antigravity' nie odnaleziono transkryptów w {base_dir}.")
+            newest = max(candidates, key=lambda p: p.stat().st_mtime)
+            if time.time() - newest.stat().st_mtime > 86400:
+                raise TranscriptNotFoundError(
+                    f"Najnowszy transkrypt Antigravity w {base_dir} jest historyczny (starszy niż 24h) i nie należy do bieżącej sesji."
+                )
+            return newest
     else:
         codex_candidates = []
         claude_candidates = []
