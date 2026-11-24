@@ -310,6 +310,13 @@ class TestCheckpointIntegration(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp_dir = tempfile.TemporaryDirectory()
         self.vault = Path(self.tmp_dir.name)
+        # HOME izolowany w tmp: checkpoint przyjmuje tylko transkrypty z ~/.gemini/antigravity/brain lub ~/.claude/projects.
+        from unittest.mock import patch as _patch
+        _home_patch = _patch.dict(os.environ, {"HOME": str(self.vault)})
+        _home_patch.start()
+        self.addCleanup(_home_patch.stop)
+        for _key in ("LAB_TRANSCRIPT_PATH", "CLAUDE_CODE_SESSION_ID", "ANTIGRAVITY_CONVERSATION_ID"):
+            os.environ.pop(_key, None)
         (self.vault / "02 Warsztat").mkdir()
         (self.vault / "07 Bazy Danych").mkdir()
         (self.vault / "08 Zespół AI" / "Dzienniki Sesji").mkdir(parents=True)
@@ -326,7 +333,7 @@ class TestCheckpointIntegration(unittest.TestCase):
     def test_checkpoint_saves_session_telemetry_and_renders_summary(self) -> None:
         from checkpoint import SessionCheckpoint, render_terminal_receipt
 
-        brain = self.vault / "brain"
+        brain = self.vault / ".gemini" / "antigravity" / "brain"
         cid = "eeee5555-5555-5555-5555-555555555555"
         t_path = _write_transcript(
             brain,

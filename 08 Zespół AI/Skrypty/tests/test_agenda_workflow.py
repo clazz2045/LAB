@@ -213,11 +213,13 @@ class TestUnprocessedThoughtBlocks(unittest.TestCase):
             WorkshopAndThoughtsInspector().inspect(ctx)
 
             rollover_warnings = [f for f in ctx.findings if f.level == "warning" and f.category == "agenda_rollover"]
+            thought_warnings = [f for f in ctx.findings if f.level == "warning" and f.category == "agenda_thoughts"]
             thought_errors = [f for f in ctx.findings if f.level == "error" and f.category == "agenda_thoughts"]
             self.assertEqual(len(rollover_warnings), 1)
             self.assertIn("1 otwartych zadań", rollover_warnings[0].message)
             self.assertIn("1 nieprzetworzonych bloków myśli", rollover_warnings[0].message)
-            self.assertEqual(len(thought_errors), 1)
+            self.assertEqual(len(thought_warnings), 1)
+            self.assertEqual(thought_errors, [])
 
     def test_workshop_inspector_rollover_fuzzy_and_keyword_match(self):
         with tempfile.TemporaryDirectory() as tmp_str:

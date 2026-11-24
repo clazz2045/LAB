@@ -382,9 +382,10 @@ class WorkshopAndThoughtsInspector(QualityInspector):
         ctx.stats["unprocessed_thought_blocks"] = len(unprocessed_blocks)
         if unprocessed_blocks:
             allowed_tags = ", ".join(f"[{t}]" for t in AGENDA_THREAD_TYPES)
-            thought_level = "error" if getattr(ctx, "strict_checkpoint", False) else "warning"
+            # Nieoznaczony blok myśli to OSTRZEŻENIE także w trybie strict (decyzja właściciela):
+            # nie blokuje kwitu zamknięcia, status skarbca = ATTENTION.
             ctx.add_finding(
-                level=thought_level,
+                level="warning",
                 category="agenda_thoughts",
                 path=str(main_file.relative_to(ctx.vault_root)),
                 room=workshop_room.id,

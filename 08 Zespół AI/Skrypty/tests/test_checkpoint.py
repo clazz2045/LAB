@@ -25,6 +25,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from checkpoint import (
+    ComplianceAnnotationRequired,
     HandoffValidationError,
     SessionCheckpoint,
     extract_handoff_from_log_content,
@@ -92,7 +93,15 @@ class TestCheckpointHandoffExecution(unittest.TestCase):
             parents=True, exist_ok=True
         )
         (self.tmp / cfg.get_room_by_role("daily-workbench").path).mkdir(parents=True, exist_ok=True)
-        self.clean_tr = self.tmp / "clean_transcript.jsonl"
+        # Transkrypt w dozwolonym katalogu (~/.claude/projects pod izolowanym HOME), inaczej checkpoint go odrzuca.
+        patcher = patch.dict(os.environ, {"HOME": str(self.tmp)})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        for key in ("LAB_TRANSCRIPT_PATH", "CLAUDE_CODE_SESSION_ID", "ANTIGRAVITY_CONVERSATION_ID"):
+            os.environ.pop(key, None)
+        proj = self.tmp / ".claude" / "projects" / "proj"
+        proj.mkdir(parents=True)
+        self.clean_tr = proj / "clean_transcript.jsonl"
         self.clean_tr.write_text(
             json.dumps({"step_index": 0, "source": "USER_EXPLICIT", "type": "USER_INPUT", "content": "Witaj"}) + "\n" +
             json.dumps({"step_index": 1, "source": "MODEL", "tool_calls": [{"name": "invoke_subagent", "args": {"TypeName": "research"}}]}) + "\n",
@@ -102,6 +111,29 @@ class TestCheckpointHandoffExecution(unittest.TestCase):
 
     def tearDown(self) -> None:
         shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_missing_transcript_is_fail_closed_violation(self) -> None:
+        """B1: brak transkryptu nie może przejść po cichu - wymaga adnotacji i zapisuje status violation."""
+        concrete = "Wdrożenie pakietu 3 zabezpieczeń silnika w 08 Zespół AI/Skrypty/"
+        env = {"HOME": str(self.tmp / "home")}
+        with patch.dict(os.environ, env):
+            for key in ("LAB_TRANSCRIPT_PATH", "CLAUDE_CODE_SESSION_ID", "ANTIGRAVITY_CONVERSATION_ID"):
+                os.environ.pop(key, None)
+            with self.assertRaises(ComplianceAnnotationRequired) as ctx:
+                self.cp.run_checkpoint(dry_run=True, handoff=concrete)
+            self.assertEqual(ctx.exception.report["status"], "violation")
+            self.assertTrue(ctx.exception.report["violations"])
+
+            receipt = self.cp.run_checkpoint(
+                slug="brak-transkryptu",
+                dry_run=False,
+                handoff=concrete,
+                violation_note="zapis awaryjny: brak transkryptu w teście",
+            )
+        self.assertEqual(receipt.compliance.get("status"), "violation")
+        log_text = (self.tmp / receipt.session_log_path).read_text(encoding="utf-8")
+        self.assertIn("Adnotacja Koordynatora: zapis awaryjny: brak transkryptu w teście", log_text)
+        self.assertNotIn("niewykonany", log_text)
 
     def test_run_checkpoint_fails_without_handoff(self) -> None:
         with self.assertRaises(HandoffValidationError) as ctx:

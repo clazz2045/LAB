@@ -37,7 +37,17 @@ if str(_scripts_dir) not in sys.path:
     sys.path.insert(0, str(_scripts_dir))
 
 from lab_core import ConfigManager, find_vault_root
-from lab_core.compliance import INVOKE_TOOL, _call_args, iter_steps, session_transcript_from_harness, transcript_files
+from lab_core.compliance import (
+    CC_INVOKE_TOOL,
+    INVOKE_TOOL,
+    _call_args,
+    claude_code_transcript_from_env,
+    iter_steps,
+    session_transcript_from_harness,
+    step_tool_calls,
+    transcript_files,
+    transcript_path_rejection,
+)
 from lab_core.distillate import (
     MAX_DISTILLATE_TOKENS,
     _strip_diacritics,
@@ -62,21 +72,38 @@ def distillate_sha256(text: str) -> str:
     return hashlib.sha256(normalize_distillate(text).encode("utf-8")).hexdigest()
 
 
-def candidate_transcripts(explicit: Optional[Path] = None, brain_dir: Optional[Path] = None) -> List[Path]:
-    """Lista czytelnych transkryptów do przeszukania (jawny > LAB_TRANSCRIPT_PATH > sesja harnessu > brain/, najnowsze pierwsze).
+def _accept_transcripts(paths: List[Path]) -> List[Path]:
+    """Filtr fail-closed: zostawia tylko ścieżki, które po realpath leżą w allowed_transcript_roots (compliance)."""
+    out: List[Path] = []
+    for p in paths:
+        rejection = transcript_path_rejection(p)
+        if rejection is None:
+            out.append(p)
+        else:
+            print(f"[subagent_gate] transkrypt odrzucony: {rejection}", file=sys.stderr)
+    return out
 
-    Powiązanie jest dowodem samo w sobie (wiadomość od konkretnego nadawcy), więc nie zgadujemy "aktywnej" sesji.
+
+def candidate_transcripts(explicit: Optional[Path] = None, brain_dir: Optional[Path] = None) -> List[Path]:
+    """Lista czytelnych transkryptów do przeszukania (jawny > LAB_TRANSCRIPT_PATH > sesja Claude Code > sesja harnessu > brain/).
+
+    Każda kandydująca ścieżka przechodzi przez compliance.transcript_path_rejection (dozwolone: ~/.claude/projects,
+    ~/.gemini/antigravity/brain). Powiązanie jest dowodem samo w sobie (wiadomość od konkretnego nadawcy / tool_result
+    konkretnego wywołania), więc nie zgadujemy "aktywnej" sesji.
     """
     if explicit is not None:
         p = Path(explicit).expanduser().resolve()
-        return [p] if p.is_file() and os.access(p, os.R_OK) else []
+        return _accept_transcripts([p]) if p.is_file() and os.access(p, os.R_OK) else []
     env_override = os.environ.get("LAB_TRANSCRIPT_PATH")
     if env_override:
         p = Path(env_override).expanduser().resolve()
-        return [p] if p.is_file() and os.access(p, os.R_OK) else []
+        return _accept_transcripts([p]) if p.is_file() and os.access(p, os.R_OK) else []
+    cc = claude_code_transcript_from_env()
+    if cc is not None:
+        return _accept_transcripts([cc])
     harness = session_transcript_from_harness(brain_dir)
     if harness is not None:
-        return [harness]
+        return _accept_transcripts([harness])
     base_dir = Path(brain_dir).expanduser().resolve() if brain_dir else (Path.home() / ".gemini" / "antigravity" / "brain")
     found: List[Path] = []
     try:
@@ -88,7 +115,8 @@ def candidate_transcripts(explicit: Optional[Path] = None, brain_dir: Optional[P
                 continue
     except OSError:
         return []
-    return sorted(found, key=lambda x: x.stat().st_mtime, reverse=True)
+    ordered = sorted(found, key=lambda x: x.stat().st_mtime, reverse=True)
+    return _accept_transcripts(ordered)
 
 
 def _step_text(step: Dict[str, Any]) -> str:
@@ -136,12 +164,15 @@ def find_latest_subagent_message(transcripts: List[Path], subagent_id: str) -> O
 
 
 def _invoke_fields(step: Dict[str, Any]) -> List[str]:
-    """Pola Role/TypeName/Prompt wszystkich wywołań invoke_subagent w kroku."""
+    """Pola wywołań subagenta w kroku: Role/TypeName/Prompt (invoke_subagent) lub subagent_type/description/prompt (Claude Code 'Agent')."""
     out: List[str] = []
-    for tc in step.get("tool_calls") or []:
-        if isinstance(tc, dict) and (tc.get("name") or tc.get("tool_name")) == INVOKE_TOOL:
-            args = _call_args(tc)
+    for tc in step_tool_calls(step):
+        name = tc.get("name") or tc.get("tool_name")
+        args = _call_args(tc)
+        if name == INVOKE_TOOL:
             out.append(" ".join(str(args.get(k, "")) for k in ("Role", "TypeName", "Prompt")))
+        elif name == CC_INVOKE_TOOL:
+            out.append(" ".join(str(args.get(k, "")) for k in ("subagent_type", "description", "prompt")))
     return out
 
 
@@ -194,6 +225,119 @@ def verify_distillate_binding(
     return False, problems
 
 
+def _cc_content_blocks(step: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Bloki content[] kroku Claude Code (tool_use w wiadomości asystenta, tool_result w wiadomości użytkownika).
+
+    Tylko kanoniczne rekordy type=user/assistant: rekordy migawek żądań API (api-request-*) powtarzają te same
+    bloki i nie mogą liczyć się jako dodatkowe wywołania/wyniki (inaczej każde wywołanie byłoby niejednoznaczne).
+    """
+    if step.get("type") not in ("user", "assistant"):
+        return []
+    msg = step.get("message")
+    if not isinstance(msg, dict) or not isinstance(msg.get("content"), list):
+        return []
+    return [b for b in msg["content"] if isinstance(b, dict)]
+
+
+def _cc_result_text(block: Dict[str, Any]) -> Optional[str]:
+    content = block.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = [str(b.get("text", "")) for b in content if isinstance(b, dict) and b.get("type") == "text"]
+        if parts:
+            return "\n".join(parts)
+    return None
+
+
+def _is_cc_transcript(transcripts: List[Path]) -> bool:
+    """Schemat Claude Code wykryty po kroku z polem message (ta sama reguła co compliance._is_claude_code_step)."""
+    for tpath in transcripts:
+        for step in iter_steps(tpath):
+            if isinstance(step.get("message"), dict):
+                return True
+    return False
+
+
+def _cc_resolve(
+    transcripts: List[Path], tool_use_id: str
+) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]], List[str]]:
+    """Wiąże wywołanie Agent (tool_use o id) z jego wynikiem (tool_result o tool_use_id) w transkryptach Claude Code.
+
+    Akceptowany jest wyłącznie układ: dokładnie jeden tool_use o tym id (name == 'Agent') oraz dokładnie jeden
+    tool_result o tym id, występujący później w tym samym pliku i bez is_error. Brak, wielokrotność lub
+    niejednoznaczność = (None, None, problemy) (fail-closed).
+    """
+    sid = str(tool_use_id or "").strip()
+    if not sid:
+        return None, None, ["Brak tool_use_id wywołania Agent (fail-closed)."]
+    uses: List[Dict[str, Any]] = []
+    results: List[Dict[str, Any]] = []
+    for tpath in transcripts:
+        for i, step in enumerate(iter_steps(tpath)):
+            for block in _cc_content_blocks(step):
+                btype = block.get("type")
+                if btype == "tool_use" and str(block.get("id") or "") == sid:
+                    inp = block.get("input")
+                    uses.append({"file": tpath, "idx": i, "name": str(block.get("name") or ""),
+                                 "input": inp if isinstance(inp, dict) else {}})
+                elif btype == "tool_result" and str(block.get("tool_use_id") or "") == sid:
+                    results.append({"file": tpath, "idx": i, "is_error": bool(block.get("is_error")),
+                                    "text": _cc_result_text(block)})
+    if len(uses) != 1:
+        return None, None, [f"Wywołań narzędzia o tool_use_id {sid} w transkryptach: {len(uses)} (wymagane dokładnie 1)."]
+    call = uses[0]
+    if call["name"] != CC_INVOKE_TOOL:
+        return None, None, [f"tool_use {sid} nie jest wywołaniem '{CC_INVOKE_TOOL}' (jest: '{call['name']}')."]
+    if len(results) != 1:
+        return None, None, [
+            f"Wyników tool_result dla wywołania Agent {sid}: {len(results)} (wymagane dokładnie 1; brak lub wiele = odmowa)."
+        ]
+    res = results[0]
+    if res["file"] != call["file"] or res["idx"] <= call["idx"]:
+        return None, None, ["tool_result nie występuje po wywołaniu Agent w tym samym transkrypcie."]
+    if res["is_error"]:
+        return None, None, [f"tool_result wywołania Agent {sid} oznaczony jako błąd (is_error)."]
+    if res["text"] is None:
+        return None, None, [f"tool_result wywołania Agent {sid} nie zawiera tekstu."]
+    return call, res, []
+
+
+def find_cc_agent_result(transcripts: List[Path], tool_use_id: str) -> Optional[str]:
+    """Znormalizowana treść tool_result powiązanego z wywołaniem Agent (None przy braku/niejednoznaczności)."""
+    _call, res, _problems = _cc_resolve(transcripts, tool_use_id)
+    return normalize_distillate(res["text"]) if res is not None and res["text"] is not None else None
+
+
+def verify_cc_distillate_binding(
+    transcripts: List[Path],
+    tool_use_id: str,
+    text: str,
+    agent_names: Tuple[str, ...],
+) -> Tuple[bool, List[str]]:
+    """Wiązanie Claude Code: destylat musi być identyczny (po normalizacji, SHA-256) z tool_result wywołania Agent
+    o tool_use_id, a subagent_type/description/prompt tego wywołania musi zgadzać się z --agent. Zwraca (ok, problemy)."""
+    if not transcripts:
+        return False, ["Brak lub nieczytelny transkrypt sesji (fail-closed): nie można zweryfikować źródła destylatu."]
+    call, res, problems = _cc_resolve(transcripts, tool_use_id)
+    if call is None or res is None:
+        return False, problems
+    if distillate_sha256(res["text"]) != distillate_sha256(text):
+        return False, [
+            f"Destylat nie odpowiada treści tool_result wywołania Agent {tool_use_id} "
+            "(tekst zrekonstruowany, zmieniony lub z innego źródła)."
+        ]
+    haystack = _strip_diacritics(
+        " ".join(str(call["input"].get(k, "")) for k in ("subagent_type", "description", "prompt"))
+    ).lower()
+    tokens = _agent_tokens(*agent_names)
+    if tokens and not any(tok in haystack for tok in tokens):
+        return False, [
+            f"--agent ({', '.join(agent_names)}) niezgodny z subagent_type wywołania Agent {tool_use_id}."
+        ]
+    return True, []
+
+
 def verify_transcript_has_subagent_call(transcript_path: Path) -> bool:
     """Zgodność wsteczna: czy w transkrypcie jest jakiekolwiek wywołanie invoke_subagent.
 
@@ -201,7 +345,7 @@ def verify_transcript_has_subagent_call(transcript_path: Path) -> bool:
     """
     for fpath in transcript_files(Path(transcript_path)):
         for step in iter_steps(fpath):
-            if _invoke_fields(step):
+            if _invoke_fields(step):  # invoke_subagent (Antigravity) lub Agent (Claude Code)
                 return True
             if step.get("name") == INVOKE_TOOL or step.get("tool_name") == INVOKE_TOOL:
                 return True
@@ -258,9 +402,11 @@ def run_gate(
             problems_list.append("Hash --sha256 nie zgadza się z treścią destylatu (tekst zmieniony po wygenerowaniu hasha).")
         if subagent_id and str(subagent_id).strip():
             transcripts = candidate_transcripts(transcript_path, brain_dir)
-            b_ok, b_problems = verify_distillate_binding(
-                transcripts, str(subagent_id).strip(), text, (agent, agent_name)
-            )
+            sid = str(subagent_id).strip()
+            if _is_cc_transcript(transcripts):
+                b_ok, b_problems = verify_cc_distillate_binding(transcripts, sid, text, (agent, agent_name))
+            else:
+                b_ok, b_problems = verify_distillate_binding(transcripts, sid, text, (agent, agent_name))
             if not b_ok:
                 ok = False
                 problems_list.extend(b_problems)
@@ -319,7 +465,10 @@ def run_auto_bind(
     """Wyszukuje najnowszą wiadomość subagenta w transkrypcie, wylicza SHA-256 i rejestruje destylat."""
     sid = str(subagent_id).strip()
     transcripts = candidate_transcripts(transcript_path, brain_dir)
-    extracted = find_latest_subagent_message(transcripts, sid)
+    if _is_cc_transcript(transcripts):
+        extracted = find_cc_agent_result(transcripts, sid)
+    else:
+        extracted = find_latest_subagent_message(transcripts, sid)
     if extracted is None:
         return run_gate(
             "",
@@ -353,7 +502,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--file", help="Plik z destylatem (domyślnie stdin)")
     parser.add_argument("--tokens", type=int, default=None, help="Zużycie tokenów subagenta w jego piaskownicy")
     parser.add_argument("--transcript-path", default=None, help="transcript.jsonl sesji rodzica (domyślnie LAB_TRANSCRIPT_PATH lub przeszukanie brain/)")
-    parser.add_argument("--subagent-id", default=None, help="conversation_id subagenta (nadawca wiadomości z destylatem)")
+    parser.add_argument("--subagent-id", default=None, help="Antigravity: conversation_id subagenta (nadawca wiadomości); Claude Code: tool_use_id wywołania Agent")
     parser.add_argument("--sha256", default=None, help="SHA-256 znormalizowanego destylatu (z --print-sha)")
     parser.add_argument("--print-sha", action="store_true", help="Wypisz SHA-256 destylatu i zakończ")
     parser.add_argument("--check-only", action="store_true", help="Lokalna walidacja formatu SAT i limitu tokenów bez transkryptu i zapisu do DB")

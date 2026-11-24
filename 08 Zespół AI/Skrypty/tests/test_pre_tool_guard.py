@@ -28,6 +28,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from lab_core.pre_tool_guard import (
+    ALLOWED_MANAGEMENT_FILES,
     COORDINATOR_READ_LIMIT,
     DENY_REASON_COMMAND,
     DENY_REASON_RECON,
@@ -42,6 +43,7 @@ from lab_core.pre_tool_guard import (
     is_allowed_coordinator_read,
     is_allowed_coordinator_subagent,
     is_allowed_coordinator_write,
+    is_in_projects_or_operations,
     is_subagent_session,
     main,
     normalize_target_path,
@@ -124,6 +126,7 @@ class TestCoordinatorReadGuard(unittest.TestCase):
         self.state_file = self.temp_vault / "read_state.json"
         (self.temp_vault / "02 Warsztat").mkdir(parents=True)
         (self.temp_vault / "03 Projekty").mkdir(parents=True)
+        (self.temp_vault / "04 Operacje").mkdir(parents=True)
         (self.temp_vault / "05 Baza Wiedzy").mkdir(parents=True)
         (self.temp_vault / "08 Zespół AI" / "Role" / "Koordynator").mkdir(parents=True)
         (self.temp_vault / "08 Zespół AI" / "Dzienniki Sesji" / "2026" / "11").mkdir(parents=True)
@@ -135,6 +138,16 @@ class TestCoordinatorReadGuard(unittest.TestCase):
         (self.temp_vault / "02 Warsztat" / "2026-11-12 – Agenda Robocza.md").write_text("# Agenda", encoding="utf-8")
         (self.temp_vault / "02 Warsztat" / "Dashboard LAB.md").write_text("# Dashboard", encoding="utf-8")
         (self.temp_vault / "02 Warsztat" / "Notatka robocza.md").write_text("# Notatka", encoding="utf-8")
+        (self.temp_vault / "03 Projekty" / "PR-021" / "progress-report.md").parent.mkdir(parents=True, exist_ok=True)
+        (self.temp_vault / "03 Projekty" / "PR-021" / "progress-report.md").write_text("# Report", encoding="utf-8")
+        (self.temp_vault / "03 Projekty" / "PR-021" / "PLAN.md").write_text("# Plan", encoding="utf-8")
+        (self.temp_vault / "03 Projekty" / "PR-021" / "README.md").write_text("# Readme", encoding="utf-8")
+        (self.temp_vault / "03 Projekty" / "PR-021" / "STATUS.md").write_text("# Status", encoding="utf-8")
+        (self.temp_vault / "04 Operacje" / "OP-009" / "progress-report.md").parent.mkdir(parents=True, exist_ok=True)
+        (self.temp_vault / "04 Operacje" / "OP-009" / "progress-report.md").write_text("# Report", encoding="utf-8")
+        (self.temp_vault / "04 Operacje" / "OP-009" / "PLAN.md").write_text("# Plan", encoding="utf-8")
+        (self.temp_vault / "04 Operacje" / "OP-009" / "README.md").write_text("# Readme", encoding="utf-8")
+        (self.temp_vault / "04 Operacje" / "OP-009" / "STATUS.md").write_text("# Status", encoding="utf-8")
         (self.temp_vault / "08 Zespół AI" / "Dzienniki Sesji" / "2026" / "11" / "session.md").write_text("# Dziennik", encoding="utf-8")
         (self.temp_vault / "08 Zespół AI" / "Skrypty" / "session_bootstrap.py").write_text("# Code", encoding="utf-8")
         (self.temp_vault / "08 Zespół AI" / "Skrypty" / "tests" / "test_dummy.py").write_text("# Test", encoding="utf-8")
@@ -206,6 +219,59 @@ class TestCoordinatorReadGuard(unittest.TestCase):
             }
             res = evaluate_pre_tool(payload, vault_root=self.temp_vault, state_file=self.state_file)
             self.assertEqual(res.get("decision"), "deny", f"Powinien zablokować odczyt spoza białej listy: {path_str}")
+            self.assertIn("Koordynator może czytać wyłącznie pliki Agendy Roboczej", res.get("reason", ""))
+
+    def test_allowed_management_files_in_projects_and_operations(self) -> None:
+        """Koordynator może czytać pliki zarządcze (progress-report.md, PLAN.md, README.md, STATUS.md) w 03 Projekty oraz 04 Operacje."""
+        management_paths = [
+            "03 Projekty/PR-021/progress-report.md",
+            "03 Projekty/PR-021/PLAN.md",
+            "03 Projekty/PR-021/README.md",
+            "03 Projekty/PR-021/STATUS.md",
+            "04 Operacje/OP-009/progress-report.md",
+            "04 Operacje/OP-009/PLAN.md",
+            "04 Operacje/OP-009/README.md",
+            "04 Operacje/OP-009/STATUS.md",
+            # Wielkość liter (case-insensitivity)
+            "03 Projekty/PR-021/plan.md",
+            "03 Projekty/PR-021/readme.md",
+            "03 Projekty/PR-021/status.md",
+        ]
+        for path_str in management_paths:
+            reset_coordinator_read_counter(state_file=self.state_file)
+            for tool_name in ("read_file", "view_file"):
+                payload = {
+                    "toolCall": {"name": tool_name, "args": {"Path": path_str}},
+                    "transcriptPath": str(self.coord_transcript),
+                }
+                res = evaluate_pre_tool(payload, vault_root=self.temp_vault, state_file=self.state_file)
+                self.assertEqual(res.get("decision"), "allow", f"Powinien zezwolić na odczyt pliku zarządczego: {path_str}")
+
+    def test_disallowed_management_files_outside_projects_and_operations(self) -> None:
+        """Pliki o nazwach zarządczych (np. README.md, PLAN.md) poza 03 Projekty i 04 Operacje są nadal blokowane."""
+        (self.temp_vault / "05 Baza Wiedzy" / "README.md").write_text("# Readme", encoding="utf-8")
+        (self.temp_vault / "05 Baza Wiedzy" / "PLAN.md").write_text("# Plan", encoding="utf-8")
+        (self.temp_vault / "05 Baza Wiedzy" / "progress-report.md").write_text("# Report", encoding="utf-8")
+        (self.temp_vault / "05 Baza Wiedzy" / "Projekty").mkdir(parents=True, exist_ok=True)
+        (self.temp_vault / "05 Baza Wiedzy" / "Projekty" / "README.md").write_text("# Readme sub", encoding="utf-8")
+        (self.temp_vault / "README.md").write_text("# Root Readme", encoding="utf-8")
+
+        outside_paths = [
+            "05 Baza Wiedzy/README.md",
+            "05 Baza Wiedzy/PLAN.md",
+            "05 Baza Wiedzy/progress-report.md",
+            "05 Baza Wiedzy/Projekty/README.md",
+            "README.md",
+            "/opt/external_workspace/03 Projekty/PR-001/README.md",
+        ]
+        for path_str in outside_paths:
+            reset_coordinator_read_counter(state_file=self.state_file)
+            payload = {
+                "toolCall": {"name": "read_file", "args": {"Path": path_str}},
+                "transcriptPath": str(self.coord_transcript),
+            }
+            res = evaluate_pre_tool(payload, vault_root=self.temp_vault, state_file=self.state_file)
+            self.assertEqual(res.get("decision"), "deny", f"Powinien zablokować odczyt poza projektami/operacjami: {path_str}")
             self.assertIn("Koordynator może czytać wyłącznie pliki Agendy Roboczej", res.get("reason", ""))
 
 
@@ -351,6 +417,40 @@ class TestCoordinatorReadCounterGuard(unittest.TestCase):
         # Nowa tura po odpowiedzi człowieka -> licznik zresetowany, odczyt dozwolony
         res = evaluate_pre_tool(p_read, vault_root=self.temp_vault, state_file=self.state_file)
         self.assertEqual(res.get("decision"), "allow", "Nowy krok użytkownika powinien zresetować licznik odczytów")
+
+    def test_read_limit_consumed_by_project_management_files(self) -> None:
+        """Odczyty plików zarządczych z 03 Projekty oraz 04 Operacje zużywają limit 2 odczytów."""
+        (self.temp_vault / "03 Projekty" / "PR-021").mkdir(parents=True, exist_ok=True)
+        (self.temp_vault / "03 Projekty" / "PR-021" / "progress-report.md").write_text("# Report", encoding="utf-8")
+        (self.temp_vault / "03 Projekty" / "PR-021" / "PLAN.md").write_text("# Plan", encoding="utf-8")
+        (self.temp_vault / "04 Operacje" / "OP-009").mkdir(parents=True, exist_ok=True)
+        (self.temp_vault / "04 Operacje" / "OP-009" / "STATUS.md").write_text("# Status", encoding="utf-8")
+
+        p1 = {
+            "toolCall": {"name": "read_file", "args": {"Path": "03 Projekty/PR-021/progress-report.md"}},
+            "transcriptPath": str(self.coord_transcript),
+        }
+        p2 = {
+            "toolCall": {"name": "read_file", "args": {"Path": "03 Projekty/PR-021/PLAN.md"}},
+            "transcriptPath": str(self.coord_transcript),
+        }
+        p3 = {
+            "toolCall": {"name": "read_file", "args": {"Path": "04 Operacje/OP-009/STATUS.md"}},
+            "transcriptPath": str(self.coord_transcript),
+        }
+
+        # Odczyt 1 -> OK
+        res1 = evaluate_pre_tool(p1, vault_root=self.temp_vault, state_file=self.state_file)
+        self.assertEqual(res1.get("decision"), "allow")
+
+        # Odczyt 2 -> OK
+        res2 = evaluate_pre_tool(p2, vault_root=self.temp_vault, state_file=self.state_file)
+        self.assertEqual(res2.get("decision"), "allow")
+
+        # Odczyt 3 -> BLOKADA REGUŁY 8
+        res3 = evaluate_pre_tool(p3, vault_root=self.temp_vault, state_file=self.state_file)
+        self.assertEqual(res3.get("decision"), "deny")
+        self.assertIn("Wykorzystano limit 2 odczytów w sesji głównej", res3.get("reason", ""))
 
 
 class TestCoordinatorWriteGuard(unittest.TestCase):

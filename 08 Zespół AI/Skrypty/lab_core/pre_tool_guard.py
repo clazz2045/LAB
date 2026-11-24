@@ -19,7 +19,8 @@ Architektura:
        Dla 'self' dozwolone jawne 'flash', 'flash_lite', 'inherit', 'pro'.
      - read_file / view_file: Ścisła biała lista ścieżek (Zero Code Reading in Main:
        bezwzględna blokada plików .py, katalogów tests/*, konfiguracji i baz danych; dozwolone wyłącznie
-       Agenda Robocza, Dzienniki Sesji, notatki Warsztatu oraz pliki sesji/brain/tmp) oraz twardy licznik
+       Agenda Robocza, Dzienniki Sesji, notatki Warsztatu, pliki zarządcze projektów/operacji
+       (progress-report.md, PLAN.md, README.md, STATUS.md) oraz pliki sesji/brain/tmp) oraz twardy licznik
        w czasie rzeczywistym ograniczający serie odczytów w sesji głównej do max 2 przed delegacją (Stop & Ask).
      - write_file / edit_file: Dopuszczone tylko pliki Agendy, Dashboardu i sesji (brain/tmp).
        Wszystkie pliki produkcyjne (kod, baza wiedzy, projekty, operacje, zasoby) są bezwzględnie blokowane.
@@ -44,6 +45,7 @@ import shlex
 import sys
 import tempfile
 import time
+import tomllib
 import traceback
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
@@ -171,8 +173,17 @@ DENY_REASON_READ_CODE = (
     "Zdeleguj to zadanie do właściwego subagenta (Maks/Klara)."
 )
 
+ALLOWED_MANAGEMENT_FILES = frozenset({
+    "progress-report.md",
+    "progress_report.md",
+    "plan.md",
+    "readme.md",
+    "status.md",
+})
+
 DENY_REASON_READ_WHITELIST = (
-    "BLOKADA REGUŁY 8: Koordynator może czytać wyłącznie pliki Agendy Roboczej, Dzienników Sesji oraz Warsztatu. "
+    "BLOKADA REGUŁY 8: Koordynator może czytać wyłącznie pliki Agendy Roboczej, Dzienników Sesji, "
+    "Warsztatu oraz pliki zarządcze projektów/operacji (progress-report.md, PLAN.md, README.md, STATUS.md). "
     "Zdeleguj zwiad do właściwego subagenta (Maks/Klara/Edyta)."
 )
 
@@ -295,6 +306,46 @@ def is_internal_session_file(raw_path: str, vault_root: Path) -> bool:
     )
 
 
+def is_in_projects_or_operations(p: Path, vault_root: Path) -> bool:
+    """Sprawdza, czy ścieżka znajduje się wewnątrz Pokoju Projektów (03) lub Operacji (04).
+
+    Rygor bezpieczeństwa:
+      1. Ścieżka musi leżeć wewnątrz vault_root.
+      2. Wymagane co najmniej 2 segmenty relatywne (pokój/plik...).
+      3. Pierwszy segment rel.parts[0] musi dokładnie odpowiadać katalogowi pokoju 03 lub 04.
+    """
+    try:
+        p_res = p.resolve()
+        root_res = vault_root.resolve()
+        if not p_res.is_relative_to(root_res):
+            return False
+
+        rel = p_res.relative_to(root_res)
+        if len(rel.parts) < 2:
+            return False
+
+        allowed_room_dirs = {"03 Projekty", "04 Operacje"}
+        cfg_file = root_res / "lab.config.toml"
+        if cfg_file.is_file():
+            try:
+                with open(cfg_file, "rb") as f:
+                    cfg_data = tomllib.load(f)
+                rooms = cfg_data.get("rooms", {})
+                for r_key, r_val in rooms.items():
+                    if isinstance(r_val, dict):
+                        role = r_val.get("role") or ""
+                        path_str = r_val.get("path") or r_val.get("name") or ""
+                        if role in ("active-projects", "lifecycle-routines") or r_key in ("r03_projects", "r04_operations"):
+                            if path_str:
+                                allowed_room_dirs.add(path_str)
+            except Exception:
+                pass
+
+        return rel.parts[0] in allowed_room_dirs
+    except Exception:
+        return False
+
+
 def is_allowed_coordinator_read(raw_path: str, vault_root: Path) -> Tuple[bool, Optional[str]]:
     """Weryfikuje, czy plik może być odczytany przez Koordynatora w sesji głównej."""
     if not raw_path or not raw_path.strip():
@@ -338,7 +389,12 @@ def is_allowed_coordinator_read(raw_path: str, vault_root: Path) -> Tuple[bool, 
     if "02 Warsztat" in parts or "Warsztat" in parts or p.parent.name.endswith("Warsztat"):
         return True, None
 
-    # Wszystkie inne ścieżki (Baza Wiedzy, Projekty, Operacje, Zasoby, Skrypty, korzeń skarbca) są blokowane dla Koordynatora
+    # 7. Pliki zarządcze i statusowe w Pokoju Projektów (03) oraz Operacji (04)
+    if p.name.lower() in ALLOWED_MANAGEMENT_FILES:
+        if is_in_projects_or_operations(p, root):
+            return True, None
+
+    # Wszystkie inne ścieżki (Baza Wiedzy, Zasoby, Skrypty, korzeń skarbca oraz pliki robocze projektów/operacji) są blokowane dla Koordynatora
     return False, DENY_REASON_READ_WHITELIST
 
 

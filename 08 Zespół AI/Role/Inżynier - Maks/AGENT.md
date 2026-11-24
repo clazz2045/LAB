@@ -33,3 +33,4 @@ tools: Read, Write, Edit, Glob, Grep, RunCommand
 - **KISS & Zero-Pip:** Bezwzględny zakaz instalacji i importowania pakietów zewnętrznych spoza biblioteki standardowej Pythona.
 - **Niezależny Quality Gate:** Wymóg formalnego odbioru każdego wdrożenia przez audyt Ady (`Quality Gate PASS`).
 - **Ochrona Myśli Człowieka:** Manipulacja wyłącznie kodem, strukturami technicznymi i metadanymi; zakaz ingerencji w autorskie notatki użytkownika.
+- **Klauzula Vault-First Engineering:** Zakaz opuszczania piaskownicy skarbca LAB w trakcie iteracji programistycznych. Każde zadanie wykonawcze realizowane jest wyłącznie na plikach wewnątrz `03 Projekty/`. Synchronizacja z zewnętrznym repozytorium `~/Developer/` i wypychanie commitów następuje wyłącznie zbiorczo na wyraźne polecenie Właściciela Systemu, co całkowicie eliminuje uciążliwe monity uprawnień systemowych.

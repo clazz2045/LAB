@@ -544,19 +544,25 @@ Zamknięcie okna roboczego sesji, synchronizacja stanu i weryfikacja integralno�
                 "BŁĄD CHECKPOINTU: Wymagane podanie konkretnego punktu startowego (handoff) dla kolejnej sesji."
             )
 
-        compliance: Dict[str, Any] = {}
+        from lab_core.compliance import (
+            check_session_compliance, find_session_transcript, missing_transcript_report, transcript_path_rejection,
+        )
+
         t_path = Path(transcript_path).expanduser().resolve() if transcript_path else None
         if t_path is None:
-            from lab_core.compliance import find_session_transcript
             t_path = find_session_transcript()
-        if t_path is not None:
-            from lab_core.compliance import check_session_compliance
-            compliance = check_session_compliance(t_path)
-            if compliance.get("status") != "ok" and not (violation_note and violation_note.strip()):
-                raise ComplianceAnnotationRequired(compliance)
+        # Ścieżka jawna przechodzi ten sam filtr co LAB_TRANSCRIPT_PATH (allowed_transcript_roots); odrzucona = brak transkryptu.
+        rejection = transcript_path_rejection(t_path) if t_path is not None else None
+        # Fail-closed (Reguła 8): brak transkryptu to jawne naruszenie, nie pusty wynik.
+        if rejection is not None:
+            compliance: Dict[str, Any] = missing_transcript_report(f"Transkrypt odrzucony (fail-closed): {rejection}.")
+        else:
+            compliance = check_session_compliance(t_path) if t_path is not None else missing_transcript_report()
+        if compliance.get("status") != "ok" and not (violation_note and violation_note.strip()):
+            raise ComplianceAnnotationRequired(compliance)
 
-        # 1. Sprawdź jakość skarbca
-        vault_status = "ok"
+        # 1. Sprawdź jakość skarbca (fail-closed: brak modułu lub błąd audytu = ATTENTION, nigdy "ok")
+        vault_status = "attention"
         if check_quality is not None:
             try:
                 report = check_quality(vault_root=self.vault_root, strict_checkpoint=True)
