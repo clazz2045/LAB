@@ -14,6 +14,7 @@ from .portability import PortabilityInspector
 from .products import ProjectsAndProductsInspector
 from .readmes import ReadmesInspector
 from .rooms import RoomsInspector
+from .skills import SkillsInspector
 from .subagents import SubagentsPolicyInspector
 from .workshop import WorkshopAndThoughtsInspector
 
@@ -30,4 +31,5 @@ __all__ = [
     "GovernanceStyleInspector",
     "PortabilityInspector",
     "EnginePurityInspector",
+    "SkillsInspector",
 ]

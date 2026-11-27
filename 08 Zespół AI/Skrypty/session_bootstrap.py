@@ -38,6 +38,7 @@ from core_config import ConfigError, ConfigManager, find_vault_root
 from check_quality import QualityChecker
 from rollover_agenda import AgendaRollover
 from projects import ProjectManager
+from lab_core.skills import discover_skills, read_project_skill_config
 
 IGNORED_INBOX_FILES = {".DS_Store", "desktop.ini", "Thumbs.db"}
 COORDINATOR_ROLE_PREFIX = "Koordynator"
@@ -116,7 +117,8 @@ class SessionBootstrap:
                 "agenda_file": "Brak konfiguracji",
                 "inbox_count": 0,
                 "inbox_items": [],
-                "projects_summary": {"active_count": 0, "active_list": [], "total_count": 0},
+                "projects_summary": {"active_count": 0, "active_list": [], "active_details": [], "total_count": 0},
+                "available_skills": [],
                 "telemetry_statusline": telemetry_statusline,
                 "ticket": {
                     "component": "config",
@@ -161,18 +163,44 @@ class SessionBootstrap:
             pm = ProjectManager(vault_root=self.vault_root)
             all_projects = pm.scan_all_projects()
             active_projects = [p for p in all_projects if p.status == "active"]
+            active_details: List[Dict[str, Any]] = []
+            for p in active_projects:
+                skill_cfg = read_project_skill_config(
+                    p.folder_path,
+                    card_path=p.card_path,
+                    vault_root=self.vault_root,
+                )
+                active_details.append({
+                    "id": p.id,
+                    "name": p.name,
+                    "project_type": skill_cfg.project_type,
+                    "skill_mode": skill_cfg.skill_mode,
+                    "skills_map": skill_cfg.skills_map,
+                })
             projects_summary = {
                 "active_count": len(active_projects),
                 "active_list": [f"{p.id} {p.name}" for p in active_projects],
+                "active_details": active_details,
                 "total_count": len(all_projects),
             }
         except Exception as ex:
             projects_summary = {
                 "active_count": 0,
                 "active_list": [],
+                "active_details": [],
                 "total_count": 0,
                 "error": str(ex),
             }
+
+        # 3b. Wykrywanie dostępnych skilli z półki (08 Zespół AI/Skille/)
+        try:
+            available_skills = [
+                s.to_dict()
+                for s in discover_skills(self.vault_root, config=self.config)
+                if s.has_skill_file
+            ]
+        except Exception:
+            available_skills = []
 
         # 4. Inspekcja jakościowa
         try:
@@ -223,6 +251,7 @@ class SessionBootstrap:
             "inbox_items": inbox_items,
             "unprocessed_thought_blocks": unprocessed_thought_blocks,
             "projects_summary": projects_summary,
+            "available_skills": available_skills,
             "ticket": ticket,
         }
 
@@ -254,6 +283,9 @@ def format_text_output(data: Dict[str, Any]) -> str:
         lines.append(f"  - Projekty w toku:    {act_cnt} aktywne ({', '.join(act_list)})")
     else:
         lines.append(f"  - Projekty w toku:    {act_cnt} aktywne")
+
+    avail_skills = data.get("available_skills", [])
+    lines.append(f"  - Półka skilli:       {len(avail_skills)} dostępnych")
 
     contract = data.get("coordinator_contract")
     if contract:

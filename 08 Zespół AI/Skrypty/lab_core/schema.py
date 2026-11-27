@@ -89,7 +89,8 @@ CREATE TABLE IF NOT EXISTS subagent_dispatches (
     summary_excerpt TEXT,
     note TEXT,
     subagent_id TEXT,
-    content_sha256 TEXT
+    content_sha256 TEXT,
+    skill_used TEXT DEFAULT ''
 );
 
 -- 7. Rejestr audytu zgodności sesji głównej (detekcja po fakcie, Faza 6)
@@ -139,7 +140,14 @@ def get_master_db_connection(db_path: Path | str) -> sqlite3.Connection:
     return conn
 
 
-DISPATCH_EXTRA_COLUMNS = ("note", "subagent_id", "content_sha256")
+DISPATCH_EXTRA_COLUMNS = ("note", "subagent_id", "content_sha256", "skill_used")
+DISPATCH_COLUMN_DEFS = {
+    "note": "TEXT",
+    "subagent_id": "TEXT",
+    "content_sha256": "TEXT",
+    "skill_used": "TEXT DEFAULT ''",
+}
+ASSETS_EXTRA_COLUMNS = ("stage", "content_sha256")
 TELEMETRY_EXTRA_COLUMNS = (
     "input_tokens",
     "cache_read_tokens",
@@ -161,7 +169,18 @@ def ensure_dispatch_columns(conn: sqlite3.Connection) -> None:
         return
     for col in DISPATCH_EXTRA_COLUMNS:
         if col not in existing:
-            conn.execute(f"ALTER TABLE subagent_dispatches ADD COLUMN {col} TEXT")
+            col_def = DISPATCH_COLUMN_DEFS.get(col, "TEXT")
+            conn.execute(f"ALTER TABLE subagent_dispatches ADD COLUMN {col} {col_def}")
+
+
+def ensure_assets_columns(conn: sqlite3.Connection) -> None:
+    """Wstecznie zgodna migracja: dodaje brakujące kolumny (stage, content_sha256) do assets_registry."""
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(assets_registry)")}
+    if not existing:
+        return
+    for col in ASSETS_EXTRA_COLUMNS:
+        if col not in existing:
+            conn.execute(f"ALTER TABLE assets_registry ADD COLUMN {col} TEXT")
 
 
 def ensure_telemetry_columns(conn: sqlite3.Connection) -> None:
@@ -204,6 +223,7 @@ def init_master_db(
             conn.executescript(SCHEMA_SQL)
             ensure_dispatch_columns(conn)
             ensure_telemetry_columns(conn)
+            ensure_assets_columns(conn)
 
             # Inicjalne metadane systemowe
             metadata = [
@@ -238,12 +258,14 @@ def log_subagent_dispatch(
     subagent_id: Optional[str] = None,
     content_sha256: Optional[str] = None,
     note: Optional[str] = None,
+    skill_used: str = "",
 ) -> int:
     """Zapisuje wywołanie subagenta w rejestrze i zwraca ID wiersza.
 
     Excerpt jest przycinany do 300 znaków (ochrona przed zrzutami w bazie).
     """
     excerpt = summary_excerpt[:300] if summary_excerpt else None
+    skill_val = str(skill_used or "").strip()
     conn = get_master_db_connection(db_path)
     try:
         with conn:
@@ -252,8 +274,8 @@ def log_subagent_dispatch(
                 """
                 INSERT INTO subagent_dispatches
                     (dispatch_time, agent_name, task_type, tokens_used, status, summary_excerpt,
-                     subagent_id, content_sha256, note)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     subagent_id, content_sha256, note, skill_used)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     datetime.now(timezone.utc).isoformat(),
@@ -265,6 +287,7 @@ def log_subagent_dispatch(
                     subagent_id,
                     content_sha256,
                     note,
+                    skill_val,
                 ),
             )
             return int(cur.lastrowid)
@@ -321,6 +344,45 @@ def record_session_compliance(
                  reads_before_first_invoke, write_calls, details[:2000], note),
             )
             return int(cur.lastrowid)
+    finally:
+        conn.close()
+
+
+def sync_assets_registry(db_path: Path | str, records: List[Dict[str, Any]]) -> int:
+    """Idempotentnie synchronizuje rejestr zasobów (assets_registry) w jednej transakcji."""
+    if not records:
+        return 0
+    now_iso = datetime.now(timezone.utc).isoformat()
+    conn = get_master_db_connection(db_path)
+    try:
+        with conn:
+            ensure_assets_columns(conn)
+            params = [
+                (
+                    str(r["filename"]),
+                    str(r["room"]),
+                    str(r["path"]),
+                    1 if r.get("consumed") else 0,
+                    str(r.get("created_at") or now_iso),
+                    r.get("stage"),
+                    r.get("content_sha256"),
+                )
+                for r in records
+            ]
+            conn.executemany(
+                """
+                INSERT INTO assets_registry (filename, room, path, consumed, created_at, stage, content_sha256)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(path) DO UPDATE SET
+                    filename = excluded.filename,
+                    room = excluded.room,
+                    consumed = excluded.consumed,
+                    stage = excluded.stage,
+                    content_sha256 = excluded.content_sha256
+                """,
+                params,
+            )
+            return len(params)
     finally:
         conn.close()
 

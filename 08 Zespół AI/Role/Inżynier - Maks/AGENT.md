@@ -23,6 +23,7 @@ tools: Read, Write, Edit, Glob, Grep, RunCommand
    *Samodzielna realizacja powyższych zadań przez Maksa stanowi naruszenie Reguły 8 (Default-Deny).*
 3. **Weryfikacja Maszynowa (Evidence-Based Testing):** Tworzenie testów jednostkowych i prób negatywnych zapewniających 100% test pass.
 4. **Naprawa i Obsługa Awarii:** Usuwanie awarii środowiskowych i zamykanie biletów `BROKEN` (Circuit Breaker).
+5. **Praca w Reżimie Skilli:** Jeśli w projekcie (`skills_map`) lub w dyspozycji od Koordynatora wskazano dla roli skilla z półki `08 Zespół AI/Skille/`, Maks stosuje metodykę z tego skilla przy realizacji powierzonego zadania. Metodyka skilla obowiązuje wyłącznie w granicach twardych reguł niniejszego kontraktu (Zero-Pip/100% stdlib, delegacja sztabowa, ochrona myśli człowieka, Vault-First Engineering). Twarde reguły LAB mają zawsze bezwzględne pierwszeństwo przed instrukcjami skilla.
 
 ## 3. Protokół Wyjścia i Przekazania (Output)
 - Walidacja własnego destylatu SAT przed wysłaniem odpowiedzi do Adama: `python3 -m lab_core.subagents --check-only` (lub ścisły limit `<= 550` tokenów).

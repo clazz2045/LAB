@@ -744,9 +744,60 @@ class TestSubagentOptimizationsAndCompactCheckpoint(unittest.TestCase):
             self.assertEqual(row["status"], "accepted")
             self.assertEqual(row["subagent_id"], SUB_ID)
             self.assertEqual(row["content_sha256"], distillate_sha256(newer))
+            self.assertEqual(row["skill_used"], "")
         finally:
             conn.close()
         self.assertTrue(tr_full.exists())
+
+    def test_cli_skill_flag_recorded_in_run_gate_and_auto_bind(self):
+        import contextlib
+        import io
+        from lab_core.subagents import main as subagents_main
+
+        tr = _write(
+            self.tr_dir / "t.jsonl",
+            [_invoke(1, role="Maks"), _sys_msg(SUB_ID, GOOD, 2)],
+        )
+        dist_file = self.tmp / "dist.md"
+        dist_file.write_text(GOOD, encoding="utf-8")
+        sha = distillate_sha256(GOOD)
+
+        with patch.dict(os.environ, {"VAULT_ROOT": str(self.tmp)}):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc_gate = subagents_main([
+                    "--agent", "Maks",
+                    "--task-type", "code",
+                    "--file", str(dist_file),
+                    "--subagent-id", SUB_ID,
+                    "--sha256", sha,
+                    "--transcript-path", str(tr),
+                    "--skill", "modern-web-guidance",
+                ])
+            self.assertEqual(rc_gate, 0)
+
+            buf2 = io.StringIO()
+            with contextlib.redirect_stdout(buf2):
+                rc_auto = subagents_main([
+                    "--auto-bind",
+                    "--agent", "Maks",
+                    "--task-type", "code",
+                    "--subagent-id", SUB_ID,
+                    "--transcript-path", str(tr),
+                    "--skill", "sqlite-wal",
+                ])
+            self.assertEqual(rc_auto, 0)
+
+        conn = get_master_db_connection(self.db)
+        try:
+            rows = conn.execute(
+                "SELECT skill_used, status FROM subagent_dispatches ORDER BY id ASC"
+            ).fetchall()
+            self.assertEqual(len(rows), 2)
+            self.assertEqual((rows[0]["skill_used"], rows[0]["status"]), ("modern-web-guidance", "accepted"))
+            self.assertEqual((rows[1]["skill_used"], rows[1]["status"]), ("sqlite-wal", "accepted"))
+        finally:
+            conn.close()
 
     def test_auto_bind_missing_message_fails_closed(self):
         from lab_core.subagents import run_auto_bind

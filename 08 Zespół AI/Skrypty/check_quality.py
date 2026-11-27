@@ -45,6 +45,7 @@ from lab_core.quality import (
     QualityReport,
     ReadmesInspector,
     RoomsInspector,
+    SkillsInspector,
     SubagentsPolicyInspector,
     WorkshopAndThoughtsInspector,
 )
@@ -82,6 +83,7 @@ class QualityChecker:
             GovernanceStyleInspector(),
             PortabilityInspector(),
             EnginePurityInspector(),
+            SkillsInspector(),
         ]
 
     def check_all(self, strict_checkpoint: bool = False, audit_legacy: bool = False) -> QualityReport:
@@ -104,6 +106,10 @@ class QualityChecker:
             "reference_notes_valid": 0,
             "reference_notes_errors": 0,
             "legacy_notes_count": 0,
+            "skills_shelf_count": 0,
+            "skills_shelf_valid": 0,
+            "custom_skill_projects": 0,
+            "skill_consistency_errors": 0,
         }
 
         ctx = QualityContext(
@@ -217,6 +223,7 @@ def render_terminal_report(
         f"  - Czystość Zasobów (SAT):      {report.stats.get('reference_notes_valid', 0)}/{report.stats.get('reference_notes', 0)} notatek ref. zgodnych (surowe zrzuty: {report.stats.get('raw_captures_in_assets', 0)}, nieopracowane stage:raw: {report.stats.get('raw_stage_notes', 0)}, dług historyczny legacy: {report.stats.get('legacy_notes_count', 0)})",
         f"  - Przenośność konfiguracji:    {'🟢 CZYSTA' if report.stats.get('portability_violations', 0) == 0 else '🔴 BŁĄD'}",
         f"  - Czystość jądra (Allowlist):  {'🟢 CZYSTA' if report.stats.get('engine_purity_violations', 0) == 0 else '🔴 BŁĄD'}",
+        f"  - Półka skilli (Zespół AI):    {report.stats.get('skills_shelf_valid', 0)}/{report.stats.get('skills_shelf_count', 0)} poprawnych (projekty custom: {report.stats.get('custom_skill_projects', 0)})",
         "-" * 64,
     ]
 

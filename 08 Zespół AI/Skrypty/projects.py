@@ -31,6 +31,7 @@ import os
 import re
 import shutil
 import sys
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple, Union
@@ -47,6 +48,11 @@ for _candidate in [_script_dir, *_script_dir.parents]:
         break
 
 from core_config import ConfigManager, ConfigError, find_vault_root
+from lab_core.skills import (
+    VALID_PROJECT_TYPES,
+    VALID_SKILL_MODES,
+    read_project_skill_config,
+)
 
 # Dozwolone statusy i ich mapowanie kanoniczne
 STATUS_MAP = {
@@ -105,6 +111,9 @@ class ProjectInfo:
     updated: str = ""
     completed_date: Optional[str] = None
     tags: List[str] = field(default_factory=list)
+    project_type: str = "internal"
+    skill_mode: str = "standard"
+    skills_map: Dict[str, List[str]] = field(default_factory=dict)
 
 
 def parse_frontmatter(file_path: Path) -> Tuple[Dict[str, str], str]:
@@ -378,6 +387,8 @@ class ProjectManager:
             if date_prefix and not fm.get("completed_date") and not fm.get("completed"):
                 completed_date = date_prefix.group(1)
 
+        skill_cfg = read_project_skill_config(folder_path, card_path=card_path, vault_root=self.vault_root)
+
         return ProjectInfo(
             id=proj_id,
             name=clean_name,
@@ -389,6 +400,9 @@ class ProjectManager:
             phase_context=context,
             updated=updated_date,
             completed_date=completed_date,
+            project_type=skill_cfg.project_type,
+            skill_mode=skill_cfg.skill_mode,
+            skills_map=skill_cfg.skills_map,
         )
 
     def archive_completed_projects(self, dry_run: bool = False) -> List[Tuple[Path, Path]]:
@@ -742,11 +756,33 @@ class ProjectManager:
         status: str = "active",
         phase_context: str = "Etap 1: Inicjalizacja",
         dry_run: bool = False,
+        project_type: str = "internal",
+        skill_mode: str = "standard",
     ) -> ProjectInfo:
-        """Zakłada kapsułę kolejnego projektu PR-xxx (karta, progress-report.md, Produkt/) i aktualizuje spis."""
+        """Zakłada kapsułę kolejnego projektu PR-xxx (karta, PLAN.md, progress-report.md, Produkt/) i aktualizuje spis."""
         clean_title = re.sub(r'[\\/:*?"<>|]+', "-", title.strip()).strip()
         if not clean_title:
             raise ValueError("Tytuł projektu nie może być pusty.")
+
+        norm_project_type = str(project_type or "internal").strip().lower()
+        if norm_project_type not in VALID_PROJECT_TYPES:
+            raise ValueError(
+                f"Nieznany typ projektu: '{project_type}'. Dozwolone: {', '.join(sorted(VALID_PROJECT_TYPES))}."
+            )
+
+        norm_skill_mode = str(skill_mode or "standard").strip().lower()
+        if norm_skill_mode not in VALID_SKILL_MODES:
+            raise ValueError(
+                f"Nieznany tryb skilli: '{skill_mode}'. Dozwolone: {', '.join(sorted(VALID_SKILL_MODES))}."
+            )
+
+        if norm_project_type == "commercial" and norm_skill_mode == "standard":
+            warnings.warn(
+                f"Projekt '{clean_title}' ma project_type: commercial przy skill_mode: standard. "
+                "Rozważ użycie '--skill-mode custom' dla doboru dedykowanych skilli.",
+                UserWarning,
+                stacklevel=2,
+            )
 
         canonical_status = self._normalize_status(status)
         proj_id = self._next_project_id()
@@ -757,6 +793,7 @@ class ProjectManager:
 
         today_str = datetime.date.today().isoformat()
         card_path = folder_path / f"{folder_name}.md"
+        plan_path = folder_path / "PLAN.md"
         progress_path = folder_path / "progress-report.md"
         produkt_dir = folder_path / "Produkt"
 
@@ -780,9 +817,29 @@ class ProjectManager:
                 f"> - **Status:** {canonical_status}\n"
                 f"> - **Folder roboczy:** `{rel_folder}/`\n"
                 f"> - **Kapsuła produktu:** `{rel_folder}/Produkt/`\n"
+                "> - **Plan projektu:** [[PLAN.md]]\n"
                 "> - **Raport postępu:** [[progress-report.md]]\n"
             )
             card_path.write_text(card_content, encoding="utf-8")
+
+            plan_content = (
+                "---\n"
+                "type: project-plan\n"
+                f"id: {proj_id}\n"
+                f"status: {canonical_status}\n"
+                f"project_type: {norm_project_type}\n"
+                f"skill_mode: {norm_skill_mode}\n"
+                "skills_map: {}\n"
+                f"created: {today_str}\n"
+                f"updated: {today_str}\n"
+                "---\n\n"
+                f"# Plan projektu: {proj_id} {clean_title}\n\n"
+                f"- **Karta projektu:** [[{folder_name}.md]]\n"
+                "- **Raport postępu:** [[progress-report.md]]\n"
+                f"- **Typ projektu:** `{norm_project_type}`\n"
+                f"- **Tryb skilli:** `{norm_skill_mode}`\n"
+            )
+            plan_path.write_text(plan_content, encoding="utf-8")
 
             progress_content = (
                 "---\n"
@@ -812,6 +869,9 @@ class ProjectManager:
             status=canonical_status,
             phase_context=phase_context,
             updated=today_str,
+            project_type=norm_project_type,
+            skill_mode=norm_skill_mode,
+            skills_map={},
         )
 
     def set_project_status(
@@ -892,6 +952,18 @@ def main() -> int:
     parser.add_argument("--scan", action="store_true", help="Skanuj i wyświetl stan projektów.")
     parser.add_argument("--create", type=str, metavar="TITLE", help="Utwórz nową kapsułę projektu PR-xxx i zaktualizuj spis.")
     parser.add_argument(
+        "--project-type",
+        choices=sorted(VALID_PROJECT_TYPES),
+        default="internal",
+        help="Typ projektu dla --create (internal | commercial, domyślnie: internal).",
+    )
+    parser.add_argument(
+        "--skill-mode",
+        choices=sorted(VALID_SKILL_MODES),
+        default="standard",
+        help="Tryb doboru skilli dla --create (standard | custom, domyślnie: standard).",
+    )
+    parser.add_argument(
         "--set-status",
         nargs=2,
         metavar=("PR_ID", "STATUS"),
@@ -934,10 +1006,23 @@ def main() -> int:
 
     if run_create:
         try:
-            proj = mgr.create_project(args.create, dry_run=args.dry_run)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                proj = mgr.create_project(
+                    args.create,
+                    dry_run=args.dry_run,
+                    project_type=args.project_type,
+                    skill_mode=args.skill_mode,
+                )
             prefix = "[DRY-RUN] " if args.dry_run else ""
             print(f"🆕 {prefix}UTWORZONO KAPSUŁĘ PROJEKTU: [{proj.id}] {proj.name}")
             print(f"  -> {proj.folder_path.relative_to(mgr.vault_root)}/")
+            print(f"  -> project_type: {proj.project_type} | skill_mode: {proj.skill_mode}")
+            if proj.project_type == "commercial" and proj.skill_mode == "standard":
+                print(
+                    "⚠️  OSTRZEŻENIE: Projekt komercyjny (project_type: commercial) ma tryb 'skill_mode: standard'. "
+                    "Rozważ '--skill-mode custom' dla doboru dedykowanych skilli."
+                )
         except (ValueError, FileExistsError) as exc:
             print(f"❌ BŁĄD TWORZENIA PROJEKTU: {exc}")
             return 1

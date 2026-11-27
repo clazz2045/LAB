@@ -148,6 +148,7 @@ CANONICAL_ENGINE_ALLOWLIST: frozenset[str] = frozenset({
     "lab_core/scratchpad.py",
     "lab_core/security.py",
     "lab_core/setup.py",
+    "lab_core/skills.py",
     "lab_core/stop_guard.py",
     "lab_core/subagents.py",
     "lab_core/telemetry.py",
@@ -173,6 +174,7 @@ CANONICAL_ENGINE_ALLOWLIST: frozenset[str] = frozenset({
     "lab_core/quality/inspectors/products.py",
     "lab_core/quality/inspectors/readmes.py",
     "lab_core/quality/inspectors/rooms.py",
+    "lab_core/quality/inspectors/skills.py",
     "lab_core/quality/inspectors/subagents.py",
     "lab_core/quality/inspectors/workshop.py",
     # Zestaw testów jednostkowych (100% stdlib unittest)
@@ -197,6 +199,7 @@ CANONICAL_ENGINE_ALLOWLIST: frozenset[str] = frozenset({
     "tests/test_session_bootstrap.py",
     "tests/test_session_prompt.py",
     "tests/test_setup.py",
+    "tests/test_skills_registry.py",
     "tests/test_stop_guard.py",
     "tests/test_subagents_policy.py",
     "tests/test_telemetry.py",

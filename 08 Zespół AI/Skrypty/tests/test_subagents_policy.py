@@ -298,15 +298,16 @@ class TestSubagentGateCLI(unittest.TestCase):
 
 
 class TestSessionDelegationDiscipline(unittest.TestCase):
-    """Testy twardej egzekucji Reguły 8 (dyscyplina delegacji sesyjnej Domena A i Domena B)."""
+    """Testy twardej egzekucji Reguły 8 (Wariant A: detekcja z transkryptu sesji AI, stan neutralny poza sesją AI)."""
 
     def _setup_session_vault(self):
         import os
         import time
+        from unittest.mock import patch
         from lab_core.installer import install_lab_vault
         from lab_core.schema import init_master_db
 
-        tmp = Path(tempfile.mkdtemp())
+        tmp = Path(tempfile.mkdtemp()).resolve()
         vault = tmp / "Vault"
         install_lab_vault(vault, skip_preflight=True)
 
@@ -324,21 +325,132 @@ class TestSessionDelegationDiscipline(unittest.TestCase):
             if p.is_file():
                 os.utime(p, (past_ts, past_ts))
 
+        env_patch = patch.dict(os.environ, {"HOME": str(tmp)})
+        env_patch.start()
+        self.addCleanup(env_patch.stop)
+        for key in ("LAB_TRANSCRIPT_PATH", "CLAUDE_CODE_SESSION_ID", "ANTIGRAVITY_CONVERSATION_ID"):
+            os.environ.pop(key, None)
+
         return tmp, vault, past_ts
 
-    def test_modified_py_without_dispatch_causes_broken_status_and_clears_after_dispatch(self):
+    @staticmethod
+    def _write_transcript(
+        tmp: Path,
+        steps: list,
+        conv_id: str = "main-session",
+        filename: str = "transcript.jsonl",
+        set_env: bool = True,
+    ) -> Path:
+        import json
         import os
+
+        logs_dir = tmp / ".gemini" / "antigravity" / "brain" / conv_id / ".system_generated" / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        tpath = logs_dir / filename
+        tpath.write_text(
+            "\n".join(json.dumps(s, ensure_ascii=False) for s in steps) + "\n",
+            encoding="utf-8",
+        )
+        if set_env:
+            os.environ["LAB_TRANSCRIPT_PATH"] = str(tpath)
+        return tpath
+
+    def test_no_transcript_neutral_when_files_modified_by_human(self):
+        import os
+        from check_quality import QualityChecker
+
+        tmp, vault, past_ts = self._setup_session_vault()
+        try:
+            cfg = ConfigManager(vault_root=vault)
+            py_file = vault / cfg.get_room_by_role("governance-and-engine").path / "Skrypty" / "lab_core" / "env.py"
+            py_file.parent.mkdir(parents=True, exist_ok=True)
+            py_file.write_text("# human edit\n", encoding="utf-8")
+            os.utime(py_file, (past_ts + 30.0, past_ts + 30.0))
+
+            os.utime(vault / "lab.config.toml", (past_ts + 30.0, past_ts + 30.0))
+
+            badania_dir = vault / cfg.get_room_by_role("atomic-synthesis-and-research").path / "Badania"
+            badania_dir.mkdir(parents=True, exist_ok=True)
+            research_note = badania_dir / "Notatka_Czlowieka.md"
+            research_note.write_text("---\ntype: research\n---\n# Treść\n", encoding="utf-8")
+            os.utime(research_note, (past_ts + 30.0, past_ts + 30.0))
+
+            notes_dir = vault / cfg.get_room_by_role("reference-and-assets").path / "Notatki"
+            notes_dir.mkdir(parents=True, exist_ok=True)
+            distilled_note = notes_dir / "Synteza_SAT.md"
+            distilled_note.write_text(
+                "---\ntype: note\nnote_type: reference\nstage: distilled\nconsumed: false\n---\n# Synteza\n",
+                encoding="utf-8",
+            )
+            os.utime(distilled_note, (past_ts + 30.0, past_ts + 30.0))
+
+            report = QualityChecker(vault_root=vault).check_all()
+            rule8_errors = [
+                f for f in report.findings
+                if f.level == "error" and f.category in ("subagents", "audit_gate")
+            ]
+            self.assertEqual(rule8_errors, [], report.findings)
+            self.assertNotEqual(report.status, "broken")
+            self.assertFalse(report.stats.get("session_audit_active"))
+        finally:
+            shutil.rmtree(tmp)
+
+    def test_active_transcript_ignores_human_disk_edits_not_in_transcript(self):
+        import os
+        from check_quality import QualityChecker
+
+        tmp, vault, past_ts = self._setup_session_vault()
+        try:
+            cfg = ConfigManager(vault_root=vault)
+            py_file = vault / cfg.get_room_by_role("governance-and-engine").path / "Skrypty" / "lab_core" / "env.py"
+            py_file.parent.mkdir(parents=True, exist_ok=True)
+            py_file.write_text("# human edit\n", encoding="utf-8")
+            os.utime(py_file, (past_ts + 30.0, past_ts + 30.0))
+
+            badania_dir = vault / cfg.get_room_by_role("atomic-synthesis-and-research").path / "Badania"
+            badania_dir.mkdir(parents=True, exist_ok=True)
+            research_note = badania_dir / "Notatka_Czlowieka.md"
+            research_note.write_text("---\ntype: research\n---\n# Treść\n", encoding="utf-8")
+            os.utime(research_note, (past_ts + 30.0, past_ts + 30.0))
+
+            # Aktywna sesja AI wykonała wyłącznie odczyt — nie zmodyfikowała żadnych plików
+            self._write_transcript(
+                tmp,
+                [
+                    {"step_index": 0, "source": "USER_EXPLICIT", "content": "Sprawdź stan"},
+                    {"step_index": 1, "source": "MODEL", "tool_calls": [{"name": "read_file", "args": {"Path": "02 Warsztat/Dashboard LAB.md"}}]},
+                ],
+            )
+
+            report = QualityChecker(vault_root=vault).check_all()
+            rule8_errors = [
+                f for f in report.findings
+                if f.level == "error" and f.category in ("subagents", "audit_gate")
+            ]
+            self.assertEqual(rule8_errors, [], report.findings)
+            self.assertTrue(report.stats.get("session_audit_active"))
+        finally:
+            shutil.rmtree(tmp)
+
+    def test_modified_py_without_dispatch_causes_broken_status_and_clears_after_dispatch(self):
         from check_quality import QualityChecker, render_terminal_report
         from lab_core.subagents import run_gate
 
-        tmp, vault, past_ts = self._setup_session_vault()
+        tmp, vault, _ = self._setup_session_vault()
         try:
             cfg = ConfigManager(vault_root=vault)
             scripts_dir = vault / cfg.get_room_by_role("governance-and-engine").path / "Skrypty"
             scripts_dir.mkdir(parents=True, exist_ok=True)
             py_file = scripts_dir / "nowy_modul.py"
             py_file.write_text("print('ok')\n", encoding="utf-8")
-            os.utime(py_file, (past_ts + 30.0, past_ts + 30.0))
+
+            self._write_transcript(
+                tmp,
+                [
+                    {"step_index": 0, "source": "USER_EXPLICIT", "content": "Napisz moduł"},
+                    {"step_index": 1, "source": "MODEL", "tool_calls": [{"name": "write_file", "args": {"Path": str(py_file)}}]},
+                ],
+            )
 
             report_before = QualityChecker(vault_root=vault).check_all()
             self.assertEqual(report_before.status, "broken")
@@ -363,11 +475,10 @@ class TestSessionDelegationDiscipline(unittest.TestCase):
             shutil.rmtree(tmp)
 
     def test_modified_distilled_note_without_dispatch_causes_broken_status_and_clears_after_dispatch(self):
-        import os
         from check_quality import QualityChecker, render_terminal_report
         from lab_core.subagents import run_gate
 
-        tmp, vault, past_ts = self._setup_session_vault()
+        tmp, vault, _ = self._setup_session_vault()
         try:
             cfg = ConfigManager(vault_root=vault)
             notes_dir = vault / cfg.get_room_by_role("reference-and-assets").path / "Notatki"
@@ -377,7 +488,14 @@ class TestSessionDelegationDiscipline(unittest.TestCase):
                 "---\ntype: note\nnote_type: reference\nstage: distilled\nconsumed: false\n---\n# Synteza\n",
                 encoding="utf-8",
             )
-            os.utime(distilled_note, (past_ts + 30.0, past_ts + 30.0))
+
+            self._write_transcript(
+                tmp,
+                [
+                    {"step_index": 0, "source": "USER_EXPLICIT", "content": "Zrób syntezę"},
+                    {"step_index": 1, "source": "MODEL", "tool_calls": [{"name": "edit_file", "args": {"Path": str(distilled_note)}}]},
+                ],
+            )
 
             report_before = QualityChecker(vault_root=vault).check_all()
             self.assertEqual(report_before.status, "broken")
@@ -402,8 +520,7 @@ class TestSessionDelegationDiscipline(unittest.TestCase):
             shutil.rmtree(tmp)
 
     def test_raw_note_does_not_trigger_knowledge_subagent_requirement(self):
-        import os
-        tmp, vault, past_ts = self._setup_session_vault()
+        tmp, vault, _ = self._setup_session_vault()
         try:
             cfg = ConfigManager(vault_root=vault)
             notes_dir = vault / cfg.get_room_by_role("reference-and-assets").path / "Notatki"
@@ -413,7 +530,14 @@ class TestSessionDelegationDiscipline(unittest.TestCase):
                 "---\ntype: note\nnote_type: reference\nstage: raw\nconsumed: false\n---\n# Surowa\n",
                 encoding="utf-8",
             )
-            os.utime(raw_note, (past_ts + 30.0, past_ts + 30.0))
+
+            self._write_transcript(
+                tmp,
+                [
+                    {"step_index": 0, "source": "USER_EXPLICIT", "content": "Zapisz zrzut"},
+                    {"step_index": 1, "source": "MODEL", "tool_calls": [{"name": "write_file", "args": {"Path": str(raw_note)}}]},
+                ],
+            )
 
             ctx = QualityContext(vault_root=vault, config=cfg)
             SubagentsPolicyInspector().inspect(ctx)
@@ -428,6 +552,13 @@ class TestSessionDelegationDiscipline(unittest.TestCase):
 
         tmp, vault, _ = self._setup_session_vault()
         try:
+            self._write_transcript(
+                tmp,
+                [
+                    {"step_index": 0, "source": "USER_EXPLICIT", "content": "Diagnostyka"},
+                    {"step_index": 1, "source": "MODEL", "tool_calls": [{"name": "read_file", "args": {"Path": "lab.config.toml"}}]},
+                ],
+            )
             self.assertEqual(run_gate(GOOD, "Maks", "engineering", vault_root=vault, enforce_binding=False), 0)
             report = QualityChecker(vault_root=vault).check_all()
             audit_errors = [
@@ -440,16 +571,22 @@ class TestSessionDelegationDiscipline(unittest.TestCase):
             shutil.rmtree(tmp)
 
     def test_audit_gate_code_change_without_ada_causes_broken(self):
-        import os
         from check_quality import QualityChecker
         from lab_core.subagents import run_gate
 
-        tmp, vault, past_ts = self._setup_session_vault()
+        tmp, vault, _ = self._setup_session_vault()
         try:
             script_file = vault / "08 Zespół AI" / "Skrypty" / "lab_core" / "env.py"
             script_file.parent.mkdir(parents=True, exist_ok=True)
             script_file.write_text("# sample\n", encoding="utf-8")
-            os.utime(script_file, (past_ts + 30.0, past_ts + 30.0))
+
+            self._write_transcript(
+                tmp,
+                [
+                    {"step_index": 0, "source": "USER_EXPLICIT", "content": "Zmień env.py"},
+                    {"step_index": 1, "source": "MODEL", "tool_calls": [{"name": "edit_file", "args": {"Path": str(script_file)}}]},
+                ],
+            )
 
             self.assertEqual(run_gate(GOOD, "Kinga", "code", vault_root=vault, enforce_binding=False), 0)
             report = QualityChecker(vault_root=vault).check_all()
@@ -463,14 +600,19 @@ class TestSessionDelegationDiscipline(unittest.TestCase):
             shutil.rmtree(tmp)
 
     def test_audit_gate_code_change_with_ada_fail_causes_broken(self):
-        import os
         from check_quality import QualityChecker
         from lab_core.subagents import run_gate
 
-        tmp, vault, past_ts = self._setup_session_vault()
+        tmp, vault, _ = self._setup_session_vault()
         try:
             cfg_file = vault / "lab.config.toml"
-            os.utime(cfg_file, (past_ts + 30.0, past_ts + 30.0))
+            self._write_transcript(
+                tmp,
+                [
+                    {"step_index": 0, "source": "USER_EXPLICIT", "content": "Zmień konfigurację"},
+                    {"step_index": 1, "source": "MODEL", "tool_calls": [{"name": "edit_file", "args": {"Path": str(cfg_file)}}]},
+                ],
+            )
 
             self.assertEqual(run_gate(GOOD, "Maja", "engineering", vault_root=vault, enforce_binding=False), 0)
             ada_fail = GOOD + "\nQuality Gate: FAIL\n"
@@ -488,16 +630,22 @@ class TestSessionDelegationDiscipline(unittest.TestCase):
             shutil.rmtree(tmp)
 
     def test_audit_gate_code_change_with_later_ada_pass_clears_broken(self):
-        import os
         from check_quality import QualityChecker
         from lab_core.subagents import run_gate
 
-        tmp, vault, past_ts = self._setup_session_vault()
+        tmp, vault, _ = self._setup_session_vault()
         try:
             script_file = vault / "08 Zespół AI" / "Skrypty" / "lab_core" / "env.py"
             script_file.parent.mkdir(parents=True, exist_ok=True)
             script_file.write_text("# sample\n", encoding="utf-8")
-            os.utime(script_file, (past_ts + 30.0, past_ts + 30.0))
+
+            self._write_transcript(
+                tmp,
+                [
+                    {"step_index": 0, "source": "USER_EXPLICIT", "content": "Zmień env.py"},
+                    {"step_index": 1, "source": "MODEL", "tool_calls": [{"name": "write_file", "args": {"Path": str(script_file)}}]},
+                ],
+            )
 
             self.assertEqual(run_gate(GOOD, "Maks", "code", vault_root=vault, enforce_binding=False), 0)
             ada_fail = GOOD + "\nQuality Gate: FAIL\n"
@@ -520,16 +668,22 @@ class TestSessionDelegationDiscipline(unittest.TestCase):
             shutil.rmtree(tmp)
 
     def test_audit_gate_long_ada_distillate_preserves_verdict_past_300_chars(self):
-        import os
         from check_quality import QualityChecker
         from lab_core.subagents import run_gate
 
-        tmp, vault, past_ts = self._setup_session_vault()
+        tmp, vault, _ = self._setup_session_vault()
         try:
             script_file = vault / "08 Zespół AI" / "Skrypty" / "lab_core" / "env.py"
             script_file.parent.mkdir(parents=True, exist_ok=True)
             script_file.write_text("# sample\n", encoding="utf-8")
-            os.utime(script_file, (past_ts + 30.0, past_ts + 30.0))
+
+            self._write_transcript(
+                tmp,
+                [
+                    {"step_index": 0, "source": "USER_EXPLICIT", "content": "Zmień env.py"},
+                    {"step_index": 1, "source": "MODEL", "tool_calls": [{"name": "write_file", "args": {"Path": str(script_file)}}]},
+                ],
+            )
 
             self.assertEqual(run_gate(GOOD, "Maks", "code", vault_root=vault, enforce_binding=False), 0)
 
@@ -553,8 +707,7 @@ class TestSessionDelegationDiscipline(unittest.TestCase):
             shutil.rmtree(tmp)
 
     def test_consumed_distilled_note_does_not_trigger_knowledge_subagent_requirement(self):
-        import os
-        tmp, vault, past_ts = self._setup_session_vault()
+        tmp, vault, _ = self._setup_session_vault()
         try:
             cfg = ConfigManager(vault_root=vault)
             notes_dir = vault / cfg.get_room_by_role("reference-and-assets").path / "Notatki"
@@ -564,12 +717,310 @@ class TestSessionDelegationDiscipline(unittest.TestCase):
                 "---\ntype: note\nnote_type: reference\nstage: distilled\nconsumed: true\n---\n# Przeczytana\n",
                 encoding="utf-8",
             )
-            os.utime(consumed_note, (past_ts + 30.0, past_ts + 30.0))
+
+            self._write_transcript(
+                tmp,
+                [
+                    {"step_index": 0, "source": "USER_EXPLICIT", "content": "Oznacz consumed"},
+                    {"step_index": 1, "source": "MODEL", "tool_calls": [{"name": "edit_file", "args": {"Path": str(consumed_note)}}]},
+                ],
+            )
 
             ctx = QualityContext(vault_root=vault, config=cfg)
             SubagentsPolicyInspector().inspect(ctx)
             errors = [f for f in ctx.findings if f.level == "error"]
             self.assertEqual(errors, [])
+        finally:
+            shutil.rmtree(tmp)
+
+    def test_previously_registered_distilled_note_with_same_hash_ignored_on_mtime_touch(self):
+        import hashlib
+        import os
+        from lab_core.schema import sync_assets_registry
+
+        tmp, vault, past_ts = self._setup_session_vault()
+        try:
+            cfg = ConfigManager(vault_root=vault)
+            notes_rel = cfg.get_room_by_role("reference-and-assets").path + "/Notatki"
+            notes_dir = vault / notes_rel
+            notes_dir.mkdir(parents=True, exist_ok=True)
+            note_path = notes_dir / "Wczesniejszy_Destylat.md"
+            content = "---\ntype: note\nnote_type: reference\nstage: distilled\nconsumed: false\n---\n# Synteza\n"
+            note_path.write_text(content, encoding="utf-8")
+            os.utime(note_path, (past_ts + 30.0, past_ts + 30.0))
+
+            db_path = vault / cfg.get_room_by_role("sqlite-relational").path / "lab_master.db"
+            sha = hashlib.sha256(content.encode("utf-8")).hexdigest()
+            sync_assets_registry(
+                db_path,
+                [{
+                    "filename": "Wczesniejszy_Destylat.md",
+                    "room": "06",
+                    "path": f"{notes_rel}/Wczesniejszy_Destylat.md",
+                    "consumed": False,
+                    "created_at": "2026-11-10",
+                    "stage": "distilled",
+                    "content_sha256": sha,
+                }],
+            )
+
+            self._write_transcript(
+                tmp,
+                [
+                    {"step_index": 0, "source": "USER_EXPLICIT", "content": "Dotknij notatkę"},
+                    {"step_index": 1, "source": "MODEL", "tool_calls": [{"name": "edit_file", "args": {"Path": str(note_path)}}]},
+                ],
+            )
+
+            ctx = QualityContext(vault_root=vault, config=cfg)
+            SubagentsPolicyInspector().inspect(ctx)
+            errors = [f for f in ctx.findings if f.level == "error"]
+            self.assertEqual(errors, [], errors)
+
+            # Zmiana treści przez AI (hash nie zgadza się z rejestrem) nadal wyzwala błąd
+            note_path.write_text(content + "\nNowa sekcja\n", encoding="utf-8")
+            ctx2 = QualityContext(vault_root=vault, config=cfg)
+            SubagentsPolicyInspector().inspect(ctx2)
+            errors2 = [f for f in ctx2.findings if f.level == "error"]
+            self.assertTrue(any("Wczesniejszy_Destylat.md" in e.message for e in errors2), errors2)
+        finally:
+            shutil.rmtree(tmp)
+
+    def test_logged_historical_distilled_note_with_prior_dispatch_ignored_on_mtime_touch(self):
+        import os
+        import time
+        from datetime import datetime
+        from lab_core.schema import get_master_db_connection
+
+        tmp, vault, _ = self._setup_session_vault()
+        try:
+            cfg = ConfigManager(vault_root=vault)
+            notes_rel = cfg.get_room_by_role("reference-and-assets").path + "/Notatki"
+            notes_dir = vault / notes_rel
+            notes_dir.mkdir(parents=True, exist_ok=True)
+            note_path = notes_dir / "Historyczny_Destylat.md"
+            cp_ts = time.time() + 10.0
+            cp_date = datetime.fromtimestamp(cp_ts).date().isoformat()
+            content = (
+                f"---\ntype: note\nnote_type: reference\nstage: distilled\n"
+                f"consumed: false\ncreated: {cp_date}\nupdated: {cp_date}\n---\n# Synteza\n"
+            )
+            note_path.write_text(content, encoding="utf-8")
+            os.utime(note_path, (cp_ts + 30.0, cp_ts + 30.0))
+
+            logs_dir = vault / cfg.get_room_by_role("governance-and-engine").path / "Dzienniki Sesji" / "2026" / "11"
+            log_file = logs_dir / "2026-11-11-10-00_adam_checkpoint.md"
+            log_file.write_text(
+                f"---\ntype: session-log\n---\n# Log\n- `{notes_rel}/Historyczny_Destylat.md`\n",
+                encoding="utf-8",
+            )
+            os.utime(log_file, (cp_ts, cp_ts))
+
+            db_path = vault / cfg.get_room_by_role("sqlite-relational").path / "lab_master.db"
+            conn = get_master_db_connection(db_path)
+            try:
+                with conn:
+                    conn.execute(
+                        "INSERT INTO subagent_dispatches (dispatch_time, agent_name, task_type, status) VALUES (?, ?, ?, ?)",
+                        (datetime.fromtimestamp(cp_ts - 5.0).astimezone().isoformat(), "Edyta", "synthesis", "accepted"),
+                    )
+            finally:
+                conn.close()
+
+            self._write_transcript(
+                tmp,
+                [
+                    {"step_index": 0, "source": "USER_EXPLICIT", "content": "Odczyt"},
+                    {"step_index": 1, "source": "MODEL", "tool_calls": [{"name": "edit_file", "args": {"Path": str(note_path)}}]},
+                ],
+            )
+
+            ctx = QualityContext(vault_root=vault, config=cfg)
+            SubagentsPolicyInspector().inspect(ctx)
+            errors = [f for f in ctx.findings if f.level == "error"]
+            self.assertEqual(errors, [], errors)
+        finally:
+            shutil.rmtree(tmp)
+
+    def test_claude_code_write_and_edit_tools_detected_in_transcript(self):
+        from lab_core.subagents import run_gate
+
+        tmp, vault, _ = self._setup_session_vault()
+        try:
+            cfg = ConfigManager(vault_root=vault)
+            scripts_dir = vault / cfg.get_room_by_role("governance-and-engine").path / "Skrypty"
+            scripts_dir.mkdir(parents=True, exist_ok=True)
+            py_file = scripts_dir / "cc_mod.py"
+            py_file.write_text("print(1)\n", encoding="utf-8")
+
+            refl_dir = vault / cfg.get_room_by_role("atomic-synthesis-and-research").path / "Refleksje"
+            refl_dir.mkdir(parents=True, exist_ok=True)
+            atom_file = refl_dir / "Atom.md"
+            atom_file.write_text("# Atom\n", encoding="utf-8")
+
+            cc_steps = [
+                {"type": "user", "message": {"role": "user", "content": "Zmień oba"}},
+                {
+                    "type": "assistant",
+                    "message": {
+                        "role": "assistant",
+                        "content": [
+                            {"type": "tool_use", "id": "t1", "name": "Write", "input": {"file_path": str(py_file)}},
+                            {"type": "tool_use", "id": "t2", "name": "Edit", "input": {"file_path": str(atom_file)}},
+                        ],
+                    },
+                },
+            ]
+            self._write_transcript(tmp, cc_steps, conv_id="cc-sess")
+
+            ctx = QualityContext(vault_root=vault, config=cfg)
+            SubagentsPolicyInspector().inspect(ctx)
+            sub_errors = [f for f in ctx.findings if f.level == "error" and f.category == "subagents"]
+            self.assertEqual(len(sub_errors), 2, ctx.findings)
+
+            self.assertEqual(run_gate(GOOD, "Kinga", "code", vault_root=vault, enforce_binding=False), 0)
+            self.assertEqual(run_gate(GOOD, "Edyta", "synthesis", vault_root=vault, enforce_binding=False), 0)
+
+            ctx2 = QualityContext(vault_root=vault, config=cfg)
+            SubagentsPolicyInspector().inspect(ctx2)
+            sub_errors_after = [f for f in ctx2.findings if f.level == "error" and f.category == "subagents"]
+            self.assertEqual(sub_errors_after, [], ctx2.findings)
+        finally:
+            shutil.rmtree(tmp)
+
+    def test_compact_antigravity_transcript_quoted_path_detected(self):
+        import json
+
+        tmp, vault, _ = self._setup_session_vault()
+        try:
+            cfg = ConfigManager(vault_root=vault)
+            scripts_dir = vault / cfg.get_room_by_role("governance-and-engine").path / "Skrypty"
+            scripts_dir.mkdir(parents=True, exist_ok=True)
+            py_file = scripts_dir / "quoted_mod.py"
+            py_file.write_text("x = 1\n", encoding="utf-8")
+
+            self._write_transcript(
+                tmp,
+                [
+                    {"step_index": 0, "source": "USER_EXPLICIT", "content": "Zapisz"},
+                    {
+                        "step_index": 1,
+                        "source": "MODEL",
+                        "tool_calls": [{"name": "write_file", "args": {"Path": json.dumps(str(py_file))}}],
+                    },
+                ],
+            )
+
+            ctx = QualityContext(vault_root=vault, config=cfg)
+            SubagentsPolicyInspector().inspect(ctx)
+            sub_errors = [f for f in ctx.findings if f.level == "error" and f.category == "subagents"]
+            self.assertEqual(len(sub_errors), 1, ctx.findings)
+            self.assertIn("quoted_mod.py", sub_errors[0].message)
+        finally:
+            shutil.rmtree(tmp)
+
+    def test_subagent_dispatch_transcript_triggers_ada_audit_gate(self):
+        from check_quality import QualityChecker
+        from lab_core.schema import log_subagent_dispatch
+        from lab_core.subagents import run_gate
+
+        tmp, vault, _ = self._setup_session_vault()
+        try:
+            cfg = ConfigManager(vault_root=vault)
+            db_path = vault / cfg.get_room_by_role("sqlite-relational").path / "lab_master.db"
+            script_file = vault / "08 Zespół AI" / "Skrypty" / "lab_core" / "env.py"
+            script_file.parent.mkdir(parents=True, exist_ok=True)
+            script_file.write_text("# changed by maks\n", encoding="utf-8")
+
+            # Główny transkrypt Koordynatora ma tylko invoke_subagent (brak bezpośrednich zapisów)
+            self._write_transcript(
+                tmp,
+                [
+                    {"step_index": 0, "source": "USER_EXPLICIT", "content": "Zleć Maksowi"},
+                    {"step_index": 1, "source": "MODEL", "tool_calls": [{"name": "invoke_subagent", "args": {"TypeName": "self"}}]},
+                ],
+                conv_id="main-session",
+                set_env=True,
+            )
+
+            # Transkrypt subagenta Maksa zawiera faktyczną modyfikację kodu
+            sub_id = "sub-maks-123"
+            self._write_transcript(
+                tmp,
+                [
+                    {"step_index": 0, "source": "SYSTEM", "type": "SYSTEM_MESSAGE", "content": "[Message] sender=main-session content=Edytuj env.py"},
+                    {"step_index": 1, "source": "MODEL", "tool_calls": [{"name": "edit_file", "args": {"Path": str(script_file)}}]},
+                ],
+                conv_id=sub_id,
+                set_env=False,
+            )
+            log_subagent_dispatch(db_path, "Maks", "code", "accepted", 300, GOOD, subagent_id=sub_id)
+
+            report = QualityChecker(vault_root=vault).check_all()
+            self.assertEqual(report.status, "broken")
+            audit_errors = [f for f in report.findings if f.category == "audit_gate" and f.level == "error"]
+            self.assertEqual(len(audit_errors), 1, report.findings)
+
+            ada_pass = GOOD + "\nQuality Gate: PASS\n"
+            self.assertEqual(run_gate(ada_pass, "Ada", "audit", vault_root=vault, enforce_binding=False), 0)
+
+            report_after = QualityChecker(vault_root=vault).check_all()
+            audit_errors_after = [f for f in report_after.findings if f.category == "audit_gate" and f.level == "error"]
+            self.assertEqual(audit_errors_after, [])
+        finally:
+            shutil.rmtree(tmp)
+
+    def test_subagent_own_session_transcript_does_not_trigger_rule8_self_violation(self):
+        tmp, vault, _ = self._setup_session_vault()
+        try:
+            cfg = ConfigManager(vault_root=vault)
+            scripts_dir = vault / cfg.get_room_by_role("governance-and-engine").path / "Skrypty"
+            scripts_dir.mkdir(parents=True, exist_ok=True)
+            py_file = scripts_dir / "nowy_modul.py"
+            py_file.write_text("print('ok')\n", encoding="utf-8")
+
+            self._write_transcript(
+                tmp,
+                [
+                    {"step_index": 0, "source": "SYSTEM", "type": "SYSTEM_MESSAGE", "content": "[Message] sender=parent-uuid content=Zadanie"},
+                    {"step_index": 1, "source": "MODEL", "tool_calls": [{"name": "write_file", "args": {"Path": str(py_file)}}]},
+                ],
+                conv_id="sub-own-1",
+            )
+
+            ctx = QualityContext(vault_root=vault, config=cfg)
+            SubagentsPolicyInspector().inspect(ctx)
+            errors = [f for f in ctx.findings if f.level == "error"]
+            self.assertEqual(errors, [], errors)
+            self.assertFalse(ctx.stats.get("session_audit_active"))
+        finally:
+            shutil.rmtree(tmp)
+
+    def test_transcript_steps_before_last_checkpoint_ignored(self):
+        from datetime import datetime, timezone
+
+        tmp, vault, past_ts = self._setup_session_vault()
+        try:
+            cfg = ConfigManager(vault_root=vault)
+            scripts_dir = vault / cfg.get_room_by_role("governance-and-engine").path / "Skrypty"
+            scripts_dir.mkdir(parents=True, exist_ok=True)
+            old_py = scripts_dir / "stary_modul.py"
+            old_py.write_text("print('old')\n", encoding="utf-8")
+
+            old_iso = datetime.fromtimestamp(past_ts - 600.0, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            self._write_transcript(
+                tmp,
+                [
+                    {"step_index": 0, "source": "USER_EXPLICIT", "created_at": old_iso, "content": "Stara sesja"},
+                    {"step_index": 1, "source": "MODEL", "created_at": old_iso, "tool_calls": [{"name": "write_file", "args": {"Path": str(old_py)}}]},
+                ],
+            )
+
+            ctx = QualityContext(vault_root=vault, config=cfg)
+            SubagentsPolicyInspector().inspect(ctx)
+            errors = [f for f in ctx.findings if f.level == "error"]
+            self.assertEqual(errors, [], errors)
+            self.assertEqual(ctx.stats.get("session_modified_code_ui"), 0)
         finally:
             shutil.rmtree(tmp)
 

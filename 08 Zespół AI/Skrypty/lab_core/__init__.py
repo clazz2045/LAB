@@ -119,6 +119,15 @@ from .pre_tool_guard import (
 from .stop_guard import (
     evaluate_stop,
 )
+from .skills import (
+    ProjectSkillConfig,
+    SkillMetadata,
+    discover_environment_skills,
+    discover_skills,
+    get_skills_dir,
+    parse_skill_file,
+    read_project_skill_config,
+)
 
 __all__ = [
     # constants
@@ -213,4 +222,12 @@ __all__ = [
     "reset_coordinator_read_counter",
     # stop_guard
     "evaluate_stop",
+    # skills
+    "SkillMetadata",
+    "ProjectSkillConfig",
+    "get_skills_dir",
+    "parse_skill_file",
+    "discover_skills",
+    "discover_environment_skills",
+    "read_project_skill_config",
 ]

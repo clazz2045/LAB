@@ -363,6 +363,7 @@ def run_gate(
     content_sha256: Optional[str] = None,
     enforce_binding: bool = True,
     brain_dir: Optional[Path] = None,
+    skill_used: str = "",
 ) -> int:
     """Waliduje destylat, loguje wynik w rejestrze i zwraca kod wyjścia (0 = accepted).
 
@@ -423,6 +424,7 @@ def run_gate(
         subagent_id=subagent_id if enforce_binding else None,
         content_sha256=actual_sha if enforce_binding else None,
         note=dispatch_note,
+        skill_used=skill_used,
     )
 
     print(f"[subagent_gate] {agent_name}/{task_type}: {status.upper()} (~{estimate_tokens(text)} tok, wpis #{row_id})")
@@ -461,6 +463,7 @@ def run_auto_bind(
     vault_root: Optional[Path] = None,
     transcript_path: Optional[Path] = None,
     brain_dir: Optional[Path] = None,
+    skill_used: str = "",
 ) -> int:
     """Wyszukuje najnowszą wiadomość subagenta w transkrypcie, wylicza SHA-256 i rejestruje destylat."""
     sid = str(subagent_id).strip()
@@ -480,6 +483,7 @@ def run_auto_bind(
             subagent_id=sid,
             content_sha256=None,
             brain_dir=brain_dir,
+            skill_used=skill_used,
         )
     sha = distillate_sha256(extracted)
     return run_gate(
@@ -492,6 +496,7 @@ def run_auto_bind(
         subagent_id=sid,
         content_sha256=sha,
         brain_dir=brain_dir,
+        skill_used=skill_used,
     )
 
 
@@ -507,6 +512,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--print-sha", action="store_true", help="Wypisz SHA-256 destylatu i zakończ")
     parser.add_argument("--check-only", action="store_true", help="Lokalna walidacja formatu SAT i limitu tokenów bez transkryptu i zapisu do DB")
     parser.add_argument("--auto-bind", action="store_true", help="Automatycznie pobierz najnowszą wiadomość od --subagent-id z transkryptu, wylicz SHA-256 i zarejestruj")
+    parser.add_argument("--skill", default="", help="Nazwa użytego skilla (opcjonalnie, domyślnie puste)")
     args = parser.parse_args(argv)
 
     if args.check_only:
@@ -531,12 +537,14 @@ def main(argv: Optional[List[str]] = None) -> int:
             args.subagent_id,
             tokens_used=args.tokens,
             transcript_path=t_path,
+            skill_used=args.skill,
         )
 
     text = Path(args.file).read_text(encoding="utf-8") if args.file else sys.stdin.read()
     return run_gate(
         text, args.agent, args.task_type, args.tokens,
         transcript_path=t_path, subagent_id=args.subagent_id, content_sha256=args.sha256,
+        skill_used=args.skill,
     )
 
 

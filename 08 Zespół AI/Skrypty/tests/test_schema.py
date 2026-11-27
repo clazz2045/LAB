@@ -20,8 +20,10 @@ if str(_scripts_dir) not in sys.path:
 
 from lab_core.schema import (
     EXPECTED_TABLES,
+    ensure_dispatch_columns,
     get_master_db_connection,
     init_master_db,
+    log_subagent_dispatch,
     verify_master_db,
 )
 
@@ -187,6 +189,53 @@ class TestLabMasterSchema(unittest.TestCase):
         self.assertTrue(res2["exists"])
         self.assertFalse(res2["valid"])
         self.assertGreater(len(res2["missing_tables"]), 0)
+
+    def test_subagent_dispatches_skill_used_migration_and_logging(self):
+        # 1. Symulacja starszej bazy bez kolumn note, subagent_id, content_sha256, skill_used
+        conn = get_master_db_connection(self.db_path)
+        try:
+            conn.execute(
+                """
+                CREATE TABLE subagent_dispatches (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    dispatch_time TEXT NOT NULL,
+                    agent_name TEXT NOT NULL,
+                    task_type TEXT NOT NULL,
+                    tokens_used INTEGER,
+                    status TEXT NOT NULL,
+                    summary_excerpt TEXT
+                );
+                """
+            )
+            conn.execute(
+                """
+                INSERT INTO subagent_dispatches (dispatch_time, agent_name, task_type, tokens_used, status, summary_excerpt)
+                VALUES ('2026-11-01T10:00:00Z', 'Maks', 'code', 100, 'accepted', 'legacy')
+                """
+            )
+            conn.commit()
+            ensure_dispatch_columns(conn)
+            cols = {row[1]: row[4] for row in conn.execute("PRAGMA table_info(subagent_dispatches)")}
+            self.assertIn("skill_used", cols)
+            self.assertEqual(cols["skill_used"], "''")
+            legacy = conn.execute("SELECT skill_used FROM subagent_dispatches WHERE summary_excerpt='legacy'").fetchone()
+            self.assertEqual(legacy["skill_used"], "")
+        finally:
+            conn.close()
+
+        # 2. Idempotentne init_master_db oraz log_subagent_dispatch z i bez skill_used
+        self.assertTrue(init_master_db(self.db_path, instance_name="TEST_LAB"))
+        r1 = log_subagent_dispatch(self.db_path, "Kinga", "code", "accepted", skill_used="sqlite-wal")
+        r2 = log_subagent_dispatch(self.db_path, "Ada", "audit", "accepted")
+
+        conn2 = get_master_db_connection(self.db_path)
+        try:
+            row1 = conn2.execute("SELECT skill_used FROM subagent_dispatches WHERE id=?", (r1,)).fetchone()
+            row2 = conn2.execute("SELECT skill_used FROM subagent_dispatches WHERE id=?", (r2,)).fetchone()
+            self.assertEqual(row1["skill_used"], "sqlite-wal")
+            self.assertEqual(row2["skill_used"], "")
+        finally:
+            conn2.close()
 
 
 if __name__ == "__main__":

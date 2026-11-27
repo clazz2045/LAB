@@ -16,6 +16,7 @@ from .inspectors import (
     ProjectsAndProductsInspector,
     ReadmesInspector,
     RoomsInspector,
+    SkillsInspector,
     SubagentsPolicyInspector,
     WorkshopAndThoughtsInspector,
 )
@@ -37,4 +38,5 @@ __all__ = [
     "GovernanceStyleInspector",
     "PortabilityInspector",
     "EnginePurityInspector",
+    "SkillsInspector",
 ]

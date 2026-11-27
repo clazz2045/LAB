@@ -203,6 +203,55 @@ class SessionCheckpoint:
 
         return False, None
 
+    def _sync_reference_assets_registry(self) -> None:
+        """Utrwala w lab_master.db (assets_registry) stan notatek referencyjnych w 06 Zasoby/Notatki/."""
+        try:
+            import unicodedata
+            from lab_core.markdown import parse_frontmatter
+            from lab_core.schema import init_master_db, sync_assets_registry
+
+            db_path = self.vault_root / self.config.get_room_by_role("sqlite-relational").path / "lab_master.db"
+            if not db_path.is_file():
+                return
+            assets_room = self.config.get_room_by_role("reference-and-assets")
+            notes_dir = self.vault_root / assets_room.path / "Notatki"
+            if not notes_dir.is_dir():
+                return
+
+            records: List[Dict[str, Any]] = []
+            for root_str, dirs, files in os.walk(notes_dir):
+                dirs[:] = [d for d in dirs if d not in IGNORED_DIRS and not d.startswith(".")]
+                for fname in files:
+                    if not fname.endswith(".md") or fname.startswith(".") or fname in IGNORED_FILES or fname.lower() == "readme.md":
+                        continue
+                    fpath = Path(root_str) / fname
+                    try:
+                        content = fpath.read_text(encoding="utf-8", errors="ignore")
+                    except OSError:
+                        continue
+                    fm, _ = parse_frontmatter(content)
+                    stage_val = str(fm.get("stage", "")).strip().lower() if fm else ""
+                    consumed_raw = fm.get("consumed") if fm else None
+                    is_consumed = consumed_raw is True or str(consumed_raw).strip().lower() == "true"
+                    created_val = str(fm.get("created") or fm.get("date") or "").strip() if fm else ""
+                    norm_content = content.replace("\r\n", "\n").replace("\r", "\n")
+                    sha = hashlib.sha256(norm_content.encode("utf-8")).hexdigest()
+                    rel = unicodedata.normalize("NFC", str(fpath.relative_to(self.vault_root)))
+                    records.append({
+                        "filename": unicodedata.normalize("NFC", fname),
+                        "room": assets_room.id,
+                        "path": rel,
+                        "consumed": is_consumed,
+                        "created_at": created_val or datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                        "stage": stage_val,
+                        "content_sha256": sha,
+                    })
+            if records:
+                init_master_db(db_path, instance_name=self.config.instance_name)
+                sync_assets_registry(db_path, records)
+        except Exception:
+            pass
+
     def get_modified_files(self, hours: float = 8.0) -> List[Path]:
         """Zwraca listę plików zmodyfikowanych w zadanym oknie czasowym (w godzinach)."""
         cutoff = time.time() - (hours * 3600.0)
@@ -608,6 +657,9 @@ Zamknięcie okna roboczego sesji, synchronizacja stanu i weryfikacja integralno�
                         save_session_telemetry(db_path, summary)
             except Exception:
                 pass
+
+        if not dry_run and vault_status != "broken":
+            self._sync_reference_assets_registry()
 
         # 3. Wystaw kwit zamknięcia (receipt)
         timestamp_iso = now.astimezone().isoformat()
